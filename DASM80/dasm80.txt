@@ -1,8 +1,5 @@
-DASM80
-======
-
-**Z80 Disassembler Documentation**
-**Z-80(tm) DISASSEMBLER V1.02beta9 - (c) 2015-16 GmEsoft**
+                              Z80 Disassembler Documentation
+                      DASM80 - version V1.02beta6 - (c) 2015 GmEsoft
 
    DASM80 is a freeware command-line Z80 disassembler for Windows. It is a symbolic
    labeling disassembler that supports all Z80 instructions and can read either TRS-80
@@ -38,7 +35,6 @@ DASM80
      DASM80 -o:ROBOT.ASM -s:ROBOT.SCR ROBOT.CMD
 
   Screening files
-  ---------------
 
    DASM80 supports the use of screening files to separate data from code. By using a
    well designed screening file, data areas can be properly marked using DB and DW
@@ -111,8 +107,7 @@ DASM80
      * Word data between 0xE000 and 0xFFFE
      * Byte data between 0x0000 and 0x1000
 
-NOTE
-----
+                                           NOTE
 
    DASM80 is freeware, but remember that it is not public domain software. All
    copyrights connected with the program and its accompanying document files remain
