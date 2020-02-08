@@ -4,7 +4,7 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.02beta9 - (c) 2015-16 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.10beta2 - (c) 2015-20 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
@@ -349,7 +349,7 @@ static void scrload( char *filename )
 					pval = &reloc;
 					++n;
 				}
-				else if ( !s[n] || s[n] == ',' )
+				else if ( !s[n] || s[n] == ',' || s[n] == ' ' || s[n] == '\t' || s[n] == ';' )
 				{
 					if ( type == '@' )
 					{
@@ -421,6 +421,7 @@ static void equload( char *filename )
 	char name[16];
 	char equ[8];
 	int count;
+	uint comment;
 
 	//trace(cprintf("equload(""%s"")\r\n", filename) );
 	file = fopen(filename,"r");
@@ -491,6 +492,14 @@ static void equload( char *filename )
 								c = toupper( s[n] );
 							}
 
+							comment = 0;
+							while ( !comment && s[n] )
+							{
+								if ( s[n] == ';' )
+									comment = n;
+								++n;
+							}
+
 							if ( count )
 							{
 								if ( c != 'H' )
@@ -507,8 +516,16 @@ static void equload( char *filename )
 								symbols[n].label = isdigit( *name );
 								symbols[n].newsym = 0;
 								symbols[n].ds = 1;
+
+								if ( comment )
+									strncpy_s( symbols[n].comment, sizeof( symbols[n].comment ), 
+									           s + comment, sizeof( symbols[n].comment ) - 1 );
+								else
+									*symbols[n].comment = 0;
+
 								if ( n == nsymbols )
 									++nsymbols;
+
 								if ( nsymbols == SYMSIZE )
 								{
 									errprintf( "*** %s - symbol table overflow: %s.", filename, name );
@@ -667,7 +684,7 @@ uint loadcmdfile ( const char *name )
 }
 
 // Allocate memory
-static int allocmemory (char * *data)
+static int allocmemory(char * *data)
 {
 	*data = malloc (0x24001);
 	if (*data == NULL)
@@ -767,6 +784,19 @@ static void printeol()
 	fprintf( out, eol );
 }
 
+static void printLabelComment( uint address )
+{
+	getlabel( address, 1 );
+	if ( getLastComment() )
+	{
+		if ( isprintbytes )
+		{
+			fputs( "\t\t", out );
+		}
+		fprintf( out, "\t%s\n", getLastComment() );
+	}
+}
+
 char* timestr()
 {
 	struct tm *ptime;
@@ -785,7 +815,7 @@ char* timestr()
 char* packsource()
 {
 	char *s, *p, *d, *l;
-	char c, f;
+	char c, f, cmt;
 
 	s = source();
 	if ( !isprintbytes )
@@ -794,6 +824,8 @@ char* packsource()
 		c = 0;
 		f = 0;
 		l = 0;
+		cmt = 0;
+
 		while ( *p )
 		{
 			++c;
@@ -802,8 +834,10 @@ char* packsource()
 				f = 1;
 			}
 
-			if ( f || *p != ' ' )
+			if ( cmt || f || *p != ' ' )
 			{
+				if ( *p == ';' )
+					cmt = 1; // comment found
 				*d++ = *p;
 				l = d;
 			}
@@ -814,6 +848,10 @@ char* packsource()
 			++p;
 		}
 		*l = 0;
+	}
+	else
+	{
+		s[48] = 0;
 	}
 	return s;
 }
@@ -1143,6 +1181,8 @@ int main(int argc, char* argv[])
 					printaddr( sym->lval );
 					fprintf( out, "%s\tEQU\t", sym->name );
 					printhexword( sym->val ); //////////////////////////////
+					if ( *sym->comment )
+						fprintf( out, "\t\t%s", sym->comment );
 					printeol();
 				}	
 			}
@@ -1297,6 +1337,7 @@ int main(int argc, char* argv[])
 							{
 								if ( pc == pc0 || *getlabel( pc, 1 ) )
 								{
+									printLabelComment( org );
 									printaddr( org );
 									fprintf( out, "%s\tDS\t", getlabel( org, 1 ) );
 									setlabelgen( org );
@@ -1308,9 +1349,11 @@ int main(int argc, char* argv[])
 
 							if ( pc0 != org && *getlabel( org, 1 ) )
 							{
+								printLabelComment( org );
 								printaddr( org );
 								fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 								setlabelgen( org );
+								printhexword( org );
 								printeol();
 							}
 						}
@@ -1448,6 +1491,7 @@ int main(int argc, char* argv[])
 						skip = 0;
 					}
 
+					printLabelComment( pc0 );
 
 					switch( type )
 					{
@@ -1598,6 +1642,7 @@ int main(int argc, char* argv[])
 			{
 				if ( *getlabel( pc, 1 ) )
 				{
+					printLabelComment( org );
 					printaddr( org );
 					fprintf( out, "%s\tDS\t", getlabel( org, 1 ) );
 					setlabelgen( org );
@@ -1609,9 +1654,11 @@ int main(int argc, char* argv[])
 
 			if ( *getlabel( org, 1 ) )
 			{
+				printLabelComment( org );
 				printaddr( org );
 				fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 				setlabelgen( org );
+				printhexword( org );
 				printeol();
 			}
 

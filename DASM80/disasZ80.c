@@ -89,6 +89,8 @@ uint			Z80symbolsSize = 0;
 uint			nZ80symbols = 0;
 uint			nNewZ80symbols = 0;
 
+static char *comment;
+
 int				usedextopcodes[32] = { 0 };
 uint			nusedextopcodes = 0;
 char			macrolines[260][40] = { 0 };
@@ -156,6 +158,8 @@ char* getlabel(uint val, char ds)
     symbol_t symtofind[1];
     symbol_t *sym;
 
+	comment = NULL;
+
 	name[0] = 0;
 
 	symtofind->val = val;
@@ -166,6 +170,9 @@ char* getlabel(uint val, char ds)
 	{
 		return name;
 	}
+
+	if ( *sym->comment )
+		comment = sym->comment;
 
 	if ( ds && ( sym->gen || !sym->ds ) )
 	{
@@ -273,13 +280,19 @@ char* getxaddr( uint x )
 	symbol_t symtofind;
 	symbol_t *sym;
 
+	comment = NULL;
+
 	symtofind.val = x;
 	symtofind.seg = getcodeseg();
 
 	sym = bsearch(&symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
 
 	if ( sym && ( !nonewequ || !sym->newsym ) )
+	{
 		strcpy(addr, sym->name);
+		if ( *sym->comment )
+			comment = sym->comment;
+	}
 	else 
 	{
 		uint xorg = x;
@@ -301,6 +314,7 @@ char* getxaddr( uint x )
 			sym->label = 0;
 			sym->newsym = 1;
 			sym->ds = 1;
+			*sym->comment = 0;
 			updateZ80Symbols();
 		}
 
@@ -312,6 +326,12 @@ char* getxaddr( uint x )
 	}
 	sym->ref = 1;
 	return addr;
+}
+
+// get comment associated to label of given code address from last getXAddr()/getLabel() call
+char* getLastComment()
+{
+	return comment;
 }
 
 //  return hex-string or label for double-byte x (dasm)
@@ -489,6 +509,21 @@ char* getoperand2 (int opcode)
 	return getoperand( opcode, 2 );
 }
 
+// add comment if any
+static void addComment( char *src, int size, char *comment )
+{
+	int n;
+
+	if ( comment )
+	{
+		for ( n = strlen( src ); n < 24; ++n )
+			src[n] = ' ';
+
+		src[n] = 0;
+		strncat_s( src, size, comment, size - n - 1 );
+	}
+}
+
 // get single instruction source
 char* source ()
 {
@@ -580,6 +615,8 @@ char* source ()
 
 	src[i] = '\0';
 
+	comment = 0;
+
 	op = getoperand1(opcode);
 	if (op != NULL) {
 		if ((useix || useiy) && instr[opcode].arg1 == simHL) {
@@ -612,7 +649,18 @@ char* source ()
 		}
 	}
 
-	for (i=strlen(src);i<32;i++) {
+	switch ( instr[opcode].mnemon )
+	{
+	case LD:
+	case JP:
+	case JR:
+	case CALL:
+	case RST:
+		addComment( src, sizeof(src), comment );
+		break;
+	}
+
+	for (i=strlen(src);i<48;i++) {
 		src[i] = ' ';
 	}
 	src[i] = '\0';

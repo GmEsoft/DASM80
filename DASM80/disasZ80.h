@@ -4,7 +4,7 @@
 typedef unsigned int uint;
 typedef unsigned char uchar;
 typedef unsigned long ulong;
-typedef unsigned long ushort;
+typedef unsigned long ushort; //TODO: check
 
 typedef int (*compfptr_t)(const void*, const void*);
 typedef uchar (*readfptr_t)( ushort );
@@ -19,6 +19,7 @@ typedef struct symbol_t { char    name[41];
 						char	newsym;			// 1 if new symbol, 0 if not
 						char	ds;				// 1 if DS label
 						char	gen;			// 1 if already generated
+						char	comment[61];
                       } symbol_t;
 
 // get label of given code address
@@ -29,6 +30,9 @@ void setlabelgen( uint val );
 
 // get label of given code address
 char* getxaddr( uint val );
+
+// get comment associated to label of given code address from last getXAddr()/getLabel() call
+char* getLastComment();
 
 // fetch long external address and return it as hex string or as label
 char* getladdr();
