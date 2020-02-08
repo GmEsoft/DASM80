@@ -4,7 +4,7 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.10beta2 - (c) 2015-20 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.10beta3 - (c) 2015-20 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
@@ -1353,7 +1353,6 @@ int main(int argc, char* argv[])
 								printaddr( org );
 								fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 								setlabelgen( org );
-								printhexword( org );
 								printeol();
 							}
 						}
@@ -1658,7 +1657,6 @@ int main(int argc, char* argv[])
 				printaddr( org );
 				fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 				setlabelgen( org );
-				printhexword( org );
 				printeol();
 			}
 
