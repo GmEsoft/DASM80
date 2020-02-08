@@ -4,7 +4,7 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.10beta3 - (c) 2015-20 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.10beta4 - (c) 2015-20 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
@@ -1198,7 +1198,7 @@ int main(int argc, char* argv[])
 			ushort pcend = ranges[nrange].end;
 			ushort nqchars;
 
-			for ( pc = pcbeg; pc < pcend; )
+			for ( pc = pcbeg; ( pc < pcend || ( pc<0x10000 && !pcend ) ); )
 			{
 				ushort pc0, segbegin = 0, segend = 0xFFFF;
 				int segoffset = 0;
@@ -1509,7 +1509,7 @@ int main(int argc, char* argv[])
 						printlabel( pc0 );
 						fprintf( out, "DB\t" );
 						printhexbyte( getdata( pc++ ) );
-						while ( pc < pcend && pc < segend && pc < pc0+8 && !*getlabel( pc, 0 ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc, 0 ) )
 						{
 							fputc( ',', out  );
 							printhexbyte( getdata( pc++ ) );
@@ -1541,7 +1541,7 @@ int main(int argc, char* argv[])
 							w += 2;
 						}
 
-						while ( pc < pcend && pc < segend && w + (isquote?2:5) < width && !*getlabel( pc, 0 ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && w + (isquote?2:5) < width && !*getlabel( pc, 0 ) )
 						{
 							ch = getdata( pc );
 							if ( ch < 0x20 || ch >= 0x7F || ( ( nqchars < 2 || nosquot ) && ch == '\'' ) )
@@ -1582,14 +1582,14 @@ int main(int argc, char* argv[])
 						printlabel( pc0 );
 #if 1
 						fprintf( out, "DW\t%s", getladdr() );
-						while ( pc < pcend && pc < segend && pc < pc0+8 && !*getlabel( pc-1, 0 ) && !*getlabel( pc, 0 ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc-1, 0 ) && !*getlabel( pc, 0 ) )
 						{
 							fprintf( out, ",%s", getladdr() );
 						}
 #else
 						fprintf( out, "DW\t%s", getxaddr( getdata( pc ) | ( getdata( pc+1 ) << 8 ) ) );
 						pc += 2;
-						while ( pc < pcend && pc < segend && pc < pc0+8 && !*getlabel( pc-1 ) && !*getlabel( pc ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc-1 ) && !*getlabel( pc ) )
 						{
 							fprintf( out, ",%s", getxaddr( getdata( pc ) | ( getdata( pc+1 ) << 8 ) ) );
 							pc += 2;
