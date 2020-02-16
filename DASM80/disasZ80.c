@@ -89,7 +89,7 @@ uint			Z80symbolsSize = 0;
 uint			nZ80symbols = 0;
 uint			nNewZ80symbols = 0;
 
-static char *comment;
+static char		*comment;
 
 int				usedextopcodes[32] = { 0 };
 uint			nusedextopcodes = 0;
@@ -128,6 +128,11 @@ void resetZ80Symbols()
 	}
 }
 
+int getNumZ80Symbols()
+{
+	return nZ80symbols;
+}
+
 // comparison function for qsort() and bsearch()
 
 int  symsort(symbol_t *a, symbol_t *b)
@@ -162,8 +167,13 @@ char* getlabel(uint val, char ds)
 
 	name[0] = 0;
 
-	symtofind->val = val;
+	symtofind->val = val - pcoffset;
     symtofind->seg = getcodeseg();
+
+	if ( val == 0x4C09 )
+		printf( "break" );
+
+	//printf( "%04X %c\t", symtofind->val, symtofind->seg );
 
     sym = bsearch(symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
     if (sym == NULL)
@@ -204,7 +214,7 @@ void setlabelgen( uint val )
     symbol_t symtofind[1];
     symbol_t *sym;
 
-	symtofind->val = val;
+	symtofind->val = val - pcoffset;
     symtofind->seg = getcodeseg();
 
     sym = bsearch(symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
@@ -223,7 +233,7 @@ char* getlabeloffset(uint val)
     symbol_t symtofind[1];
     symbol_t *sym;
 
-    symtofind->val = val;
+	symtofind->val = val - pcoffset;
     symtofind->seg = getcodeseg();
 
     sym = Z80symbols;
@@ -296,8 +306,8 @@ char* getxaddr( uint x )
 	else 
 	{
 		uint xorg = x;
-		if ( pcoffsetseg != 'C' )
-			xorg -= pcoffset;
+		//if ( pcoffsetseg != 'C' )
+		//	xorg -= pcoffset;
 
 		if ( !sym )
 		{
@@ -387,8 +397,10 @@ char* getladdr()
 
 	x = fetch ();
 	x += fetch () << 8;
-	if ( pcoffset && x + pcoffset >= pcoffsetbeg && x + pcoffset < pcoffsetend )
-		x += pcoffset;
+	if ( pcoffset && ( x + pcoffset >= pcoffsetbeg ) && ( x + pcoffset < pcoffsetend ) )
+	{
+		//x += pcoffset;
+	}
 	else
 		pcoffsetseg = 'C';
 	ret = getxaddr( x );
@@ -400,10 +412,21 @@ char* getladdr()
 char* getsaddr()
 {
 	uint x;
+	char oldseg = pcoffsetseg;
+	char *ret;
 	signed char d;
+
 	d = (signed char) fetch ();
 	x = pc + d;
-	return getxaddr( x );
+	if ( pcoffset && ( x + pcoffset >= pcoffsetbeg ) && ( x + pcoffset < pcoffsetend ) )
+	{
+		x -= pcoffset;
+	}
+	else
+		pcoffsetseg = 'C';
+	ret = getxaddr( x );
+	pcoffsetseg = oldseg;
+	return ret;
 }
 
 // Get nth opcode (1st or 2nd)

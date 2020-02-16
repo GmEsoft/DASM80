@@ -68,6 +68,8 @@ void updateZ80Symbols();
 
 void resetZ80Symbols();
 
+int getNumZ80Symbols();
+
 // Attach Z80 to memory and I/O ports
 void setZ80MemIO( /*writefptr_t outdata, 
 				  readfptr_t indata, 

@@ -4,7 +4,7 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.10beta4 - (c) 2015-20 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.20beta1 - (c) 2015-20 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
@@ -416,7 +416,7 @@ static void equload( char *filename )
 	uint n;
 	ushort dec;
 	ushort hex;
-	char c;
+	char c, seg;
 	int token;
 	char name[16];
 	char equ[8];
@@ -480,6 +480,17 @@ static void equload( char *filename )
 					case 2:
 						if ( !strcmp( equ, "EQU" ) )
 						{
+							seg = 'C';
+
+							if ( isalpha( c ) )
+							{
+								// Relocatable blocks
+								// SYM	EQU		Znnnn
+								seg = c;
+								++n;
+								c = toupper( s[n] );
+							}
+
 							while ( isalnum( c ) && c != 'H' )
 							{
 								++count;
@@ -504,13 +515,13 @@ static void equload( char *filename )
 							{
 								if ( c != 'H' )
 									hex = dec;
-								c = ( *name == '@' && hex < 128 ) ? 'S' : 'C';
+								seg = ( *name == '@' && hex < 128 ) ? 'S' : seg;
 								for ( n=0; n<nsymbols; ++n )
-									if ( symbols[n].val == hex && symbols[n].seg == c )
+									if ( symbols[n].val == hex && symbols[n].seg == seg )
 										break;
 								strcpy( symbols[n].name, name );
 								// segment = 'S' for LS-DOS SVC calls, 'C' otherwise
-								symbols[n].seg = c;
+								symbols[n].seg = seg;
 								symbols[n].val = hex;
 								symbols[n].lval = symbols[n].val;
 								symbols[n].label = isdigit( *name );
@@ -552,6 +563,30 @@ static void equload( char *filename )
 	}
 }
 
+// Load Binary file
+static uint binload( char *filename, uint org )
+{
+    FILE *file;
+	char s[256];
+	uint i,ptr,tra,count;
+
+	ptr = tra = org;
+    file = fopen(filename,"rb");
+    if (file!=NULL) {
+        while (!feof(file)) {
+			count = fread( s, 1, sizeof( s ), file );
+			for ( i=0; i<count; ++i )
+				putdata( ptr++, s[i] );
+        }
+        fclose (file);
+    }
+	else
+	{
+		errprintf( "*** Error opening BIN file: %s", filename );
+		errexit( 1 );
+	}
+	return tra;
+}
 // Load Hex-Intel file
 static uint hexload( char *filename )
 {
@@ -574,10 +609,8 @@ static uint hexload( char *filename )
 							putdata( ptr++, htoc (s,i) );
                         }
                         break;
-                    case 3:
-                        tra = (htoc (s,9) << 8) | htoc (s,11);
-                        break;
                     case 1:
+                        tra = ptr;
                         break;
                 }
             }
@@ -876,6 +909,7 @@ int main(int argc, char* argv[])
 	char outfilename[80];
 	char hexfilename[80];
 	char cmdfilename[80];
+	char binfilename[80];
 	char scrfilename[80];
 	char symfilename[8][80];
 	int  nsymfiles = 0;
@@ -890,13 +924,16 @@ int main(int argc, char* argv[])
 	char outformat = 'A';
 	short width = 63;
 	ushort dsmax = 0x200;
-//	char *sourceline;
+	int org;
+
+	//	char *sourceline;
 //	char buf[256];
 
 	outfilename[0] = '\0';
  	scrfilename[0] = '\0';
 	hexfilename[0] = '\0';
 	cmdfilename[0] = '\0';
+	binfilename[0] = '\0';
 
 	out = stdout;
 
@@ -934,7 +971,7 @@ int main(int argc, char* argv[])
 			case 'H':	// Intel Hex file
 				if ( *s == ':' )
 					s++;
-				if ( *hexfilename || *cmdfilename )
+				if ( *hexfilename || *cmdfilename || *binfilename)
 				{
 					errprintf( "*** %s - Only one input file allowed.", argv[i] );
 					errexit( 1 );
@@ -945,13 +982,34 @@ int main(int argc, char* argv[])
 			case 'C':	// DOS CMD file
 				if ( *s == ':' )
 					s++;
-				if ( *hexfilename || *cmdfilename )
+				if ( *hexfilename || *cmdfilename || *binfilename)
 				{
 					errprintf( "*** %s - Only one input file allowed.", argv[i] );
 					errexit( 1 );
 				}
 				strcpy( cmdfilename, s );
 				adddefaultext( cmdfilename, ".cmd" );
+				break;
+			case 'B':	// BIN file
+				org = 0;
+				if ( isdigit( *s ) )
+				{
+					org = *(s++) - '0';
+					while ( isalnum( *s ) )
+					{
+						org = (org<<4) + ( *s > '9' ? toupper( *s ) + 10 - 'A' : *s - '0' );
+						++s;
+					}
+				}
+				if ( *s == ':' )
+					s++;
+				if ( *hexfilename || *cmdfilename || *binfilename)
+				{
+					errprintf( "*** %s - Only one input file allowed.", argv[i] );
+					errexit( 1 );
+				}
+				strcpy( binfilename, s );
+				adddefaultext( binfilename, ".bin" );
 				break;
 			case 'S':	// Screening file
 				if ( *s == ':' )
@@ -1020,17 +1078,18 @@ int main(int argc, char* argv[])
 				fputs ( "\r\n"
 					"DASM80 [-H:file]|[[-C:]file] [-S:file] [-O:file]|[-P:file] [-F:A|H|C]\r\n"
 					"       [-E:file [-E:file...]] [-M:file [-M:file...]] [-W[W]] [-NE] [-NH] [-NQ]\r\n"
-					"where:  -H:file     = code file in hex intel format [.HEX]\r\n"
-					"        [-C:]file   = code file in DOS loader format [.CMD]\r\n"
-					"        -S:file     = screening file [.SCR]\r\n"
-					"        -O:file     = output [.ASM]\r\n"
-					"        -P:file     = listing output [.PRN]\r\n"
-					"        -E:file     = one or more equate files [.EQU]\r\n"
-					"        -M:file     = one or more symbol tables [.MAP]\r\n"
-					"        -W[W]       = [super] wide mode\r\n"
-					"        -NE         = no new EQUates\r\n"
-					"        -NH         = no header\r\n"
-					"        -NQ         = no single quotes\r\n"
+					"where:  -H:file      = code file in hex intel format [.HEX]\r\n"
+					"        [-C:]file    = code file in DOS loader format [.CMD]\r\n"
+					"        -B[org]:file = code file in binary [.BIN]\r\n"
+					"        -S:file      = screening file [.SCR]\r\n"
+					"        -O:file      = output [.ASM]\r\n"
+					"        -P:file      = listing output [.PRN]\r\n"
+					"        -E:file      = one or more equate files [.EQU]\r\n"
+					"        -M:file      = one or more symbol tables [.MAP]\r\n"
+					"        -W[W]        = [super] wide mode\r\n"
+					"        -NE          = no new EQUates\r\n"
+					"        -NH          = no header\r\n"
+					"        -NQ          = no single quotes\r\n"
 					, stderr );
 				errexit( 0 );
 				break;
@@ -1051,7 +1110,7 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	if ( !*hexfilename && !*cmdfilename )
+	if ( !*hexfilename && !*cmdfilename && !*binfilename )
 	{
 		errprintf( "*** Missing input filename." );
 		errexit( 1 );
@@ -1074,11 +1133,18 @@ int main(int argc, char* argv[])
 	setZ80MemIO( getdata );
 
 	if ( *hexfilename )
+	{
 		tra = hexload( hexfilename );
+	}
 
 	if ( *cmdfilename )
 	{
 		tra = loadcmdfile( cmdfilename );
+	}
+
+	if ( *binfilename )
+	{
+		tra = binload( binfilename, org );
 	}
 
 	pseg = getsegment( tra );
@@ -1667,6 +1733,25 @@ int main(int argc, char* argv[])
 			printeol();
 			printeol();
 			break;
+		}
+	}
+
+	if ( isprintbytes )
+	{
+		fputs( "** Symbols Table **", out );
+		printeol();
+		printeol();
+		fputs( "Name\t\tSeg Addr  Comment", out );
+		printeol();
+		fputs( "------------------------------------------------------------", out );
+		printeol();
+		for ( i=0; i<getNumZ80Symbols(); ++i )
+		{
+			if ( !symbols[i].ref )
+				continue;
+			fprintf( out, "%-15s %c   %04X  %s", 
+				symbols[i].name, symbols[i].seg, symbols[i].val, symbols[i].comment );
+			printeol();
 		}
 	}
 
