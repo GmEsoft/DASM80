@@ -4,7 +4,7 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.20beta1 - (c) 2015-20 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.20beta2+DEV - (c) 2015-20 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
@@ -661,7 +661,7 @@ uint loadfile(FILE* file)
 			tra = fgetc( file );
 			tra += ( fgetc( file ) << 8 );
 			//cprintf(" CMD trans: addr=%04x\r\n", tra);
-			break;
+			return tra;
 		case 0x05:
 			counter = fgetc( file );
 			//cprintf(" CMD data: addr=%04x length=%02x\r\n", addr, counter);
@@ -916,6 +916,7 @@ int main(int argc, char* argv[])
 	char equfilename[8][80];
 	int  nequfiles = 0;
 	int  nosquot = 0;
+	int  zmac = 0;
 	char nonewsymflag  = 0;
 	char noheader = 0;
 	unsigned short tra = 0;
@@ -1074,10 +1075,24 @@ int main(int argc, char* argv[])
 					--s;
 				}
 				break;
+			case '-':
+				if ( !stricmp( s, "zmac" ) )
+				{
+					zmac = 1;
+				}
+				else
+				{
+					errprintf( "*** %s - Unrecognized option.", argv[i] );
+				}
+				break;
+			case '!':	// Wait keypress before starting
+				fputs( "Press ENTER to start.", stderr );
+				getchar();
+				break;
 			case '?':	// Help
 				fputs ( "\r\n"
-					"DASM80 [-H:file]|[[-C:]file] [-S:file] [-O:file]|[-P:file] [-F:A|H|C]\r\n"
-					"       [-E:file [-E:file...]] [-M:file [-M:file...]] [-W[W]] [-NE] [-NH] [-NQ]\r\n"
+					"DASM80 [-H:file]|[[-C:]file] [-S:file] [-O:file]|[-P:file] [-E:file [-E:file...]]\r\n"
+					"       [-M:file [-M:file...]] [-W[W]] [-NE] [-NH] [-NQ] [--ZMAC]\r\n"
 					"where:  -H:file      = code file in hex intel format [.HEX]\r\n"
 					"        [-C:]file    = code file in DOS loader format [.CMD]\r\n"
 					"        -B[org]:file = code file in binary [.BIN]\r\n"
@@ -1090,6 +1105,7 @@ int main(int argc, char* argv[])
 					"        -NE          = no new EQUates\r\n"
 					"        -NH          = no header\r\n"
 					"        -NQ          = no single quotes\r\n"
+					"        --ZMAC       = ZMAC compatibility\r\n"
 					, stderr );
 				errexit( 0 );
 				break;
@@ -1250,7 +1266,7 @@ int main(int argc, char* argv[])
 					if ( *sym->comment )
 						fprintf( out, "\t\t%s", sym->comment );
 					printeol();
-				}	
+				}
 			}
 			printeol();
 			break;
@@ -1365,11 +1381,12 @@ int main(int argc, char* argv[])
 						{
 							--pcoffsetseg;
 							pcoffset = 0;
-							getlabel( pc0, 1 );
+							//getlabel( pc0, 1 ); 	// moved down
 							offset = segoffset;
 							pcoffset = segoffset;
 							pcoffsetbeg = segoffsetbeg;
 							pcoffsetend = segoffsetend;
+							getlabel( pc0, 1 ); 	// moved here
 						}
 					}
 
@@ -1392,6 +1409,7 @@ int main(int argc, char* argv[])
 					org = pc;
 					break;
 				case 2: // generate output
+					// Generate new origin with DS/EQU/ORG
 					if ( pc0 != org || offset != segoffset )
 					{
 						skip = 0;
@@ -1399,6 +1417,8 @@ int main(int argc, char* argv[])
 						if ( org < 0xFFFF /* && *getlabel( org ) */)
 						{
 							printeol();
+
+							//	label	DS		nnnn
 							for ( pc = org + 1; pc <= pc0 /*&& pc <= segend */&& pc <= org + dsmax; ++pc )
 							{
 								if ( pc == pc0 || *getlabel( pc, 1 ) )
@@ -1413,6 +1433,7 @@ int main(int argc, char* argv[])
 								}
 							}
 
+							//	label	EQU		$
 							if ( pc0 != org && *getlabel( org, 1 ) )
 							{
 								printLabelComment( org );
@@ -1425,28 +1446,45 @@ int main(int argc, char* argv[])
 
 						pc = pc0;
 
+						// PHASE change
 						if ( offset != segoffset )
 						{
 							--pcoffsetseg;
 							printeol();
 
+							// end PHASE
+							//			ORG		$-ORG$+LORG$
+							//			LORG	$
 							if ( offset )
 							{
 								printeol();
 
-								printaddr( pc0 );
-								fputs( "\tORG\t$-ORG$+LORG$", out );
-								printeol();
-								_TRACE_( "*** ORG $-ORG$+LORG$\n" );
+								if ( zmac )
+								{
+									printaddr( pc0 );
+									fputs( "\tDEPHASE", out );
+									printeol();
+									printeol();
+									_TRACE_( "*** DEPHASE\n" );
+								}
+								else
+								{
+									printaddr( pc0 );
+									fputs( "\tORG\t$-ORG$+LORG$", out );
+									printeol();
+									_TRACE_( "*** ORG $-ORG$+LORG$\n" );
 
-								printaddr( pc0 );
-								fputs( "\tLORG\t$", out );
-								printeol();
-								_TRACE_( "*** LORG $\n" );
+									printaddr( pc0 );
+									fputs( "\tLORG\t$", out );
+									printeol();
+									_TRACE_( "*** LORG $\n" );
+								}
 							}
 
 							pcoffset = 0;
 
+							// New ORG
+							//			ORG		nnnn
 							if ( pc0 != org )
 							{
 								printeol();
@@ -1457,40 +1495,58 @@ int main(int argc, char* argv[])
 								printeol();
 							}
 
+							// New PHASE block
+							//	LORG$	DEFL	$
+							//	label	EQU		$
+							//			ORG		nnnn
+							//	ORG$	DEFL	$
+							//			LORG	LORG$
 							if ( segoffset )
 							{
-
-								printaddr( pc0 );
-								fputs( "LORG$\tDEFL\t$", out );
-								printeol();
-
-								printeol();
-
-								if ( *getlabel( pc0, 1 ) )
+								if ( zmac )
 								{
-									printaddr( org );
-									fprintf( out, "%s\tEQU\t$", getxaddr( pc0 ) );
-									setlabelgen( pc0 );
 									printeol();
+									printaddr( pc0 );
+									fprintf( out, "\tPHASE\t%s", getxaddr( pc0 - segoffset ) );
+									printeol();
+									printeol();
+									_TRACE_( "*** PHASE %s\n", getxaddr( pc0 - segoffset ) );
 								}
+								else
+								{
 
-								printeol();
+									printaddr( pc0 );
+									fputs( "LORG$\tDEFL\t$", out );
+									printeol();
 
-								printaddr( pc0 - segoffset );
-								fprintf( out, "\tORG\t%s", getxaddr( pc0 - segoffset ) );
-								printeol();
+									printeol();
 
-								printaddr( pc0 );
-								fputs( "ORG$\tDEFL\t$", out );
-								printeol();
+									if ( *getlabel( pc0, 1 ) )
+									{
+										printaddr( org );
+										fprintf( out, "%s\tEQU\t$", getxaddr( pc0 ) );
+										setlabelgen( pc0 );
+										printeol();
+									}
 
-								printaddr( pc0 );
-								fputs( "\tLORG\tLORG$", out );
-								printeol();
+									printeol();
 
-								printeol();
+									printaddr( pc0 - segoffset );
+									fprintf( out, "\tORG\t%s", getxaddr( pc0 - segoffset ) );
+									printeol();
 
-								_TRACE_( "*** ORG=%04X %s LORG=%04X\n", pc0-segoffset, getxaddr( pc0 - segoffset ), pc0 );
+									printaddr( pc0 );
+									fputs( "ORG$\tDEFL\t$", out );
+									printeol();
+
+									printaddr( pc0 );
+									fputs( "\tLORG\tLORG$", out );
+									printeol();
+
+									printeol();
+
+									_TRACE_( "*** ORG=%04X %s LORG=%04X\n", pc0-segoffset, getxaddr( pc0 - segoffset ), pc0 );
+								}
 							}
 							/*else
 							{
@@ -1668,10 +1724,12 @@ int main(int argc, char* argv[])
 					for ( ++pc0; pc0 < pc; ++pc0 )
 					{
 						s = getlabel( pc0, 0 );
+
+						//	label	EQU		$-dd
 						if ( *s )
 						{
 							printaddr( org );
-							fprintf( out, "%s\tEQU\t$-%d", getxaddr( pc0 ), pc-pc0 );
+							fprintf( out, "%s\tEQU\t$-%d", /*getxaddr( pc0 )*/s, pc-pc0 );
 							printeol();
 						}
 					}
@@ -1703,6 +1761,8 @@ int main(int argc, char* argv[])
 		case 2:
 			// generate output
 			printeol();
+			// end of file remaining labels:
+			//	label	EQU		$+nnnn
 			for ( pc = org + 1; pc < 0xFFFF && pc <= org + dsmax; ++pc )
 			{
 				if ( *getlabel( pc, 1 ) )
@@ -1717,6 +1777,8 @@ int main(int argc, char* argv[])
 				}
 			}
 
+			// end of file last label:
+			//	label	EQU		$
 			if ( *getlabel( org, 1 ) )
 			{
 				printLabelComment( org );
@@ -1741,18 +1803,27 @@ int main(int argc, char* argv[])
 		fputs( "** Symbols Table **", out );
 		printeol();
 		printeol();
-		fputs( "Name\t\tSeg Addr  Comment", out );
+		fputs( "Name\t\tSeg Flags Addr  Comment", out );
 		printeol();
 		fputs( "------------------------------------------------------------", out );
 		printeol();
 		for ( i=0; i<getNumZ80Symbols(); ++i )
 		{
-			if ( !symbols[i].ref )
-				continue;
-			fprintf( out, "%-15s %c   %04X  %s", 
-				symbols[i].name, symbols[i].seg, symbols[i].val, symbols[i].comment );
+			//if ( !symbols[i].ref )
+			//	continue;
+			fprintf( out, "%-15s %c   %c%c%c%c  %04X  %s", 
+				symbols[i].name, symbols[i].seg, symbols[i].gen?' ':'!', symbols[i].newsym ?'+':' ', 
+				symbols[i].ref ?' ':'?', symbols[i].label ?' ':'=', symbols[i].val, symbols[i].comment );
 			printeol();
 		}
+		printeol();
+		fputs( "Flags:\n", out );
+		fputs( "------\n", out );
+		fputs( "! Not generated\n", out );
+		fputs( "+ New symbol\n", out );
+		fputs( "? Not referenced\n", out );
+		fputs( "= EQUate\n", out );
+
 	}
 
 	if ( *outfilename )

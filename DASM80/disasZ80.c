@@ -155,13 +155,19 @@ static char getcodeseg()
 }
 
 
-// get label of given code address
+// get label of given code address (for LABELS only!)
 char* getlabel(uint val, char ds)
 {
     static char name[40] ;
+	static int _break = 0xFFFF;
 
     symbol_t symtofind[1];
     symbol_t *sym;
+
+	if ( val == _break )
+	{
+		printf( "Break at %04X\n", _break );
+	}
 
 	comment = NULL;
 
@@ -169,9 +175,6 @@ char* getlabel(uint val, char ds)
 
 	symtofind->val = val - pcoffset;
     symtofind->seg = getcodeseg();
-
-	if ( val == 0x4C09 )
-		printf( "break" );
 
 	//printf( "%04X %c\t", symtofind->val, symtofind->seg );
 
@@ -198,12 +201,13 @@ char* getlabel(uint val, char ds)
 	if ( sym->newsym )
 	{
 		*sym->name = pcoffset ? getcodeseg() : 'L';
+		sym->newsym = 0;
 	}
-    strcpy (name, sym->name);
+
+	strcpy (name, sym->name);
 	if ( labelcolon )
 		strcat (name, ":");
 	sym->label = 1;
-	sym->newsym = 0;
 
     return name;
 }
@@ -418,7 +422,7 @@ char* getsaddr()
 
 	d = (signed char) fetch ();
 	x = pc + d;
-	if ( pcoffset && ( x + pcoffset >= pcoffsetbeg ) && ( x + pcoffset < pcoffsetend ) )
+	if ( pcoffset && ( x >= pcoffsetbeg ) && ( x < pcoffsetend ) )
 	{
 		x -= pcoffset;
 	}
