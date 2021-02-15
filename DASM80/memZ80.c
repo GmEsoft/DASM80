@@ -28,7 +28,7 @@ char data[0x10000];
 range_t ranges[1000];
 unsigned nranges = 0;
 
-// TRS-80 Data Write Routine (memory address space)
+// Data Write Routine (memory address space)
 unsigned char putdata(unsigned short addr, unsigned char byte)
 {
 	// M1 System RAM

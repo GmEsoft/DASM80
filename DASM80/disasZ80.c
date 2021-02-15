@@ -89,6 +89,8 @@ uint			Z80symbolsSize = 0;
 uint			nZ80symbols = 0;
 uint			nNewZ80symbols = 0;
 
+static char		*comment;
+
 int				usedextopcodes[32] = { 0 };
 uint			nusedextopcodes = 0;
 char			macrolines[260][40] = { 0 };
@@ -126,6 +128,11 @@ void resetZ80Symbols()
 	}
 }
 
+int getNumZ80Symbols()
+{
+	return nZ80symbols;
+}
+
 // comparison function for qsort() and bsearch()
 
 int  symsort(symbol_t *a, symbol_t *b)
@@ -148,24 +155,37 @@ static char getcodeseg()
 }
 
 
-// get label of given code address
+// get label of given code address (for LABELS only!)
 char* getlabel(uint val, char ds)
 {
     static char name[40] ;
+	static int _break = 0xFFFF;
 
     symbol_t symtofind[1];
     symbol_t *sym;
 
+	if ( val == _break )
+	{
+		printf( "Break at %04X\n", _break );
+	}
+
+	comment = NULL;
+
 	name[0] = 0;
 
-	symtofind->val = val;
+	symtofind->val = val - pcoffset;
     symtofind->seg = getcodeseg();
+
+	//printf( "%04X %c\t", symtofind->val, symtofind->seg );
 
     sym = bsearch(symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
     if (sym == NULL)
 	{
 		return name;
 	}
+
+	if ( *sym->comment )
+		comment = sym->comment;
 
 	if ( ds && ( sym->gen || !sym->ds ) )
 	{
@@ -181,12 +201,13 @@ char* getlabel(uint val, char ds)
 	if ( sym->newsym )
 	{
 		*sym->name = pcoffset ? getcodeseg() : 'L';
+		sym->newsym = 0;
 	}
-    strcpy (name, sym->name);
+
+	strcpy (name, sym->name);
 	if ( labelcolon )
 		strcat (name, ":");
 	sym->label = 1;
-	sym->newsym = 0;
 
     return name;
 }
@@ -197,7 +218,7 @@ void setlabelgen( uint val )
     symbol_t symtofind[1];
     symbol_t *sym;
 
-	symtofind->val = val;
+	symtofind->val = val - pcoffset;
     symtofind->seg = getcodeseg();
 
     sym = bsearch(symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
@@ -216,7 +237,7 @@ char* getlabeloffset(uint val)
     symbol_t symtofind[1];
     symbol_t *sym;
 
-    symtofind->val = val;
+	symtofind->val = val - pcoffset;
     symtofind->seg = getcodeseg();
 
     sym = Z80symbols;
@@ -273,18 +294,24 @@ char* getxaddr( uint x )
 	symbol_t symtofind;
 	symbol_t *sym;
 
+	comment = NULL;
+
 	symtofind.val = x;
 	symtofind.seg = getcodeseg();
 
 	sym = bsearch(&symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
 
 	if ( sym && ( !nonewequ || !sym->newsym ) )
+	{
 		strcpy(addr, sym->name);
+		if ( *sym->comment )
+			comment = sym->comment;
+	}
 	else 
 	{
 		uint xorg = x;
-		if ( pcoffsetseg != 'C' )
-			xorg -= pcoffset;
+		//if ( pcoffsetseg != 'C' )
+		//	xorg -= pcoffset;
 
 		if ( !sym )
 		{
@@ -301,6 +328,7 @@ char* getxaddr( uint x )
 			sym->label = 0;
 			sym->newsym = 1;
 			sym->ds = 1;
+			*sym->comment = 0;
 			updateZ80Symbols();
 		}
 
@@ -312,6 +340,12 @@ char* getxaddr( uint x )
 	}
 	sym->ref = 1;
 	return addr;
+}
+
+// get comment associated to label of given code address from last getXAddr()/getLabel() call
+char* getLastComment()
+{
+	return comment;
 }
 
 //  return hex-string or label for double-byte x (dasm)
@@ -367,8 +401,10 @@ char* getladdr()
 
 	x = fetch ();
 	x += fetch () << 8;
-	if ( pcoffset && x + pcoffset >= pcoffsetbeg && x + pcoffset < pcoffsetend )
-		x += pcoffset;
+	if ( pcoffset && ( x + pcoffset >= pcoffsetbeg ) && ( x + pcoffset < pcoffsetend ) )
+	{
+		//x += pcoffset;
+	}
 	else
 		pcoffsetseg = 'C';
 	ret = getxaddr( x );
@@ -380,10 +416,21 @@ char* getladdr()
 char* getsaddr()
 {
 	uint x;
+	char oldseg = pcoffsetseg;
+	char *ret;
 	signed char d;
+
 	d = (signed char) fetch ();
 	x = pc + d;
-	return getxaddr( x );
+	if ( pcoffset && ( x >= pcoffsetbeg ) && ( x < pcoffsetend ) )
+	{
+		x -= pcoffset;
+	}
+	else
+		pcoffsetseg = 'C';
+	ret = getxaddr( x );
+	pcoffsetseg = oldseg;
+	return ret;
 }
 
 // Get nth opcode (1st or 2nd)
@@ -489,6 +536,21 @@ char* getoperand2 (int opcode)
 	return getoperand( opcode, 2 );
 }
 
+// add comment if any
+static void addComment( char *src, int size, char *comment )
+{
+	int n;
+
+	if ( comment )
+	{
+		for ( n = strlen( src ); n < 24; ++n )
+			src[n] = ' ';
+
+		src[n] = 0;
+		strncat_s( src, size, comment, size - n - 1 );
+	}
+}
+
 // get single instruction source
 char* source ()
 {
@@ -580,6 +642,8 @@ char* source ()
 
 	src[i] = '\0';
 
+	comment = 0;
+
 	op = getoperand1(opcode);
 	if (op != NULL) {
 		if ((useix || useiy) && instr[opcode].arg1 == simHL) {
@@ -612,7 +676,18 @@ char* source ()
 		}
 	}
 
-	for (i=strlen(src);i<32;i++) {
+	switch ( instr[opcode].mnemon )
+	{
+	case LD:
+	case JP:
+	case JR:
+	case CALL:
+	case RST:
+		addComment( src, sizeof(src), comment );
+		break;
+	}
+
+	for (i=strlen(src);i<48;i++) {
 		src[i] = ' ';
 	}
 	src[i] = '\0';

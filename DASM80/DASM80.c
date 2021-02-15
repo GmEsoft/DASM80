@@ -4,7 +4,7 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.02beta9 - (c) 2015-16 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.20beta2+DEV - (c) 2015-20 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
@@ -349,7 +349,7 @@ static void scrload( char *filename )
 					pval = &reloc;
 					++n;
 				}
-				else if ( !s[n] || s[n] == ',' )
+				else if ( !s[n] || s[n] == ',' || s[n] == ' ' || s[n] == '\t' || s[n] == ';' )
 				{
 					if ( type == '@' )
 					{
@@ -416,11 +416,12 @@ static void equload( char *filename )
 	uint n;
 	ushort dec;
 	ushort hex;
-	char c;
+	char c, seg;
 	int token;
 	char name[16];
 	char equ[8];
 	int count;
+	uint comment;
 
 	//trace(cprintf("equload(""%s"")\r\n", filename) );
 	file = fopen(filename,"r");
@@ -479,6 +480,17 @@ static void equload( char *filename )
 					case 2:
 						if ( !strcmp( equ, "EQU" ) )
 						{
+							seg = 'C';
+
+							if ( isalpha( c ) )
+							{
+								// Relocatable blocks
+								// SYM	EQU		Znnnn
+								seg = c;
+								++n;
+								c = toupper( s[n] );
+							}
+
 							while ( isalnum( c ) && c != 'H' )
 							{
 								++count;
@@ -491,24 +503,40 @@ static void equload( char *filename )
 								c = toupper( s[n] );
 							}
 
+							comment = 0;
+							while ( !comment && s[n] )
+							{
+								if ( s[n] == ';' )
+									comment = n;
+								++n;
+							}
+
 							if ( count )
 							{
 								if ( c != 'H' )
 									hex = dec;
-								c = ( *name == '@' && hex < 128 ) ? 'S' : 'C';
+								seg = ( *name == '@' && hex < 128 ) ? 'S' : seg;
 								for ( n=0; n<nsymbols; ++n )
-									if ( symbols[n].val == hex && symbols[n].seg == c )
+									if ( symbols[n].val == hex && symbols[n].seg == seg )
 										break;
 								strcpy( symbols[n].name, name );
 								// segment = 'S' for LS-DOS SVC calls, 'C' otherwise
-								symbols[n].seg = c;
+								symbols[n].seg = seg;
 								symbols[n].val = hex;
 								symbols[n].lval = symbols[n].val;
 								symbols[n].label = isdigit( *name );
 								symbols[n].newsym = 0;
 								symbols[n].ds = 1;
+
+								if ( comment )
+									strncpy_s( symbols[n].comment, sizeof( symbols[n].comment ), 
+									           s + comment, sizeof( symbols[n].comment ) - 1 );
+								else
+									*symbols[n].comment = 0;
+
 								if ( n == nsymbols )
 									++nsymbols;
+
 								if ( nsymbols == SYMSIZE )
 								{
 									errprintf( "*** %s - symbol table overflow: %s.", filename, name );
@@ -535,6 +563,30 @@ static void equload( char *filename )
 	}
 }
 
+// Load Binary file
+static uint binload( char *filename, uint org )
+{
+    FILE *file;
+	char s[256];
+	uint i,ptr,tra,count;
+
+	ptr = tra = org;
+    file = fopen(filename,"rb");
+    if (file!=NULL) {
+        while (!feof(file)) {
+			count = fread( s, 1, sizeof( s ), file );
+			for ( i=0; i<count; ++i )
+				putdata( ptr++, s[i] );
+        }
+        fclose (file);
+    }
+	else
+	{
+		errprintf( "*** Error opening BIN file: %s", filename );
+		errexit( 1 );
+	}
+	return tra;
+}
 // Load Hex-Intel file
 static uint hexload( char *filename )
 {
@@ -557,10 +609,8 @@ static uint hexload( char *filename )
 							putdata( ptr++, htoc (s,i) );
                         }
                         break;
-                    case 3:
-                        tra = (htoc (s,9) << 8) | htoc (s,11);
-                        break;
                     case 1:
+                        tra = ptr;
                         break;
                 }
             }
@@ -611,7 +661,7 @@ uint loadfile(FILE* file)
 			tra = fgetc( file );
 			tra += ( fgetc( file ) << 8 );
 			//cprintf(" CMD trans: addr=%04x\r\n", tra);
-			break;
+			return tra;
 		case 0x05:
 			counter = fgetc( file );
 			//cprintf(" CMD data: addr=%04x length=%02x\r\n", addr, counter);
@@ -667,7 +717,7 @@ uint loadcmdfile ( const char *name )
 }
 
 // Allocate memory
-static int allocmemory (char * *data)
+static int allocmemory(char * *data)
 {
 	*data = malloc (0x24001);
 	if (*data == NULL)
@@ -767,6 +817,19 @@ static void printeol()
 	fprintf( out, eol );
 }
 
+static void printLabelComment( uint address )
+{
+	getlabel( address, 1 );
+	if ( getLastComment() )
+	{
+		if ( isprintbytes )
+		{
+			fputs( "\t\t", out );
+		}
+		fprintf( out, "\t%s\n", getLastComment() );
+	}
+}
+
 char* timestr()
 {
 	struct tm *ptime;
@@ -785,7 +848,7 @@ char* timestr()
 char* packsource()
 {
 	char *s, *p, *d, *l;
-	char c, f;
+	char c, f, cmt;
 
 	s = source();
 	if ( !isprintbytes )
@@ -794,6 +857,8 @@ char* packsource()
 		c = 0;
 		f = 0;
 		l = 0;
+		cmt = 0;
+
 		while ( *p )
 		{
 			++c;
@@ -802,8 +867,10 @@ char* packsource()
 				f = 1;
 			}
 
-			if ( f || *p != ' ' )
+			if ( cmt || f || *p != ' ' )
 			{
+				if ( *p == ';' )
+					cmt = 1; // comment found
 				*d++ = *p;
 				l = d;
 			}
@@ -814,6 +881,10 @@ char* packsource()
 			++p;
 		}
 		*l = 0;
+	}
+	else
+	{
+		s[48] = 0;
 	}
 	return s;
 }
@@ -838,12 +909,14 @@ int main(int argc, char* argv[])
 	char outfilename[80];
 	char hexfilename[80];
 	char cmdfilename[80];
+	char binfilename[80];
 	char scrfilename[80];
 	char symfilename[8][80];
 	int  nsymfiles = 0;
 	char equfilename[8][80];
 	int  nequfiles = 0;
 	int  nosquot = 0;
+	int  zmac = 0;
 	char nonewsymflag  = 0;
 	char noheader = 0;
 	unsigned short tra = 0;
@@ -852,13 +925,16 @@ int main(int argc, char* argv[])
 	char outformat = 'A';
 	short width = 63;
 	ushort dsmax = 0x200;
-//	char *sourceline;
+	int org;
+
+	//	char *sourceline;
 //	char buf[256];
 
 	outfilename[0] = '\0';
  	scrfilename[0] = '\0';
 	hexfilename[0] = '\0';
 	cmdfilename[0] = '\0';
+	binfilename[0] = '\0';
 
 	out = stdout;
 
@@ -896,7 +972,7 @@ int main(int argc, char* argv[])
 			case 'H':	// Intel Hex file
 				if ( *s == ':' )
 					s++;
-				if ( *hexfilename || *cmdfilename )
+				if ( *hexfilename || *cmdfilename || *binfilename)
 				{
 					errprintf( "*** %s - Only one input file allowed.", argv[i] );
 					errexit( 1 );
@@ -907,13 +983,34 @@ int main(int argc, char* argv[])
 			case 'C':	// DOS CMD file
 				if ( *s == ':' )
 					s++;
-				if ( *hexfilename || *cmdfilename )
+				if ( *hexfilename || *cmdfilename || *binfilename)
 				{
 					errprintf( "*** %s - Only one input file allowed.", argv[i] );
 					errexit( 1 );
 				}
 				strcpy( cmdfilename, s );
 				adddefaultext( cmdfilename, ".cmd" );
+				break;
+			case 'B':	// BIN file
+				org = 0;
+				if ( isdigit( *s ) )
+				{
+					org = *(s++) - '0';
+					while ( isalnum( *s ) )
+					{
+						org = (org<<4) + ( *s > '9' ? toupper( *s ) + 10 - 'A' : *s - '0' );
+						++s;
+					}
+				}
+				if ( *s == ':' )
+					s++;
+				if ( *hexfilename || *cmdfilename || *binfilename)
+				{
+					errprintf( "*** %s - Only one input file allowed.", argv[i] );
+					errexit( 1 );
+				}
+				strcpy( binfilename, s );
+				adddefaultext( binfilename, ".bin" );
 				break;
 			case 'S':	// Screening file
 				if ( *s == ':' )
@@ -978,21 +1075,37 @@ int main(int argc, char* argv[])
 					--s;
 				}
 				break;
+			case '-':
+				if ( !stricmp( s, "zmac" ) )
+				{
+					zmac = 1;
+				}
+				else
+				{
+					errprintf( "*** %s - Unrecognized option.", argv[i] );
+				}
+				break;
+			case '!':	// Wait keypress before starting
+				fputs( "Press ENTER to start.", stderr );
+				getchar();
+				break;
 			case '?':	// Help
 				fputs ( "\r\n"
-					"DASM80 [-H:file]|[[-C:]file] [-S:file] [-O:file]|[-P:file] [-F:A|H|C]\r\n"
-					"       [-E:file [-E:file...]] [-M:file [-M:file...]] [-W[W]] [-NE] [-NH] [-NQ]\r\n"
-					"where:  -H:file     = code file in hex intel format [.HEX]\r\n"
-					"        [-C:]file   = code file in DOS loader format [.CMD]\r\n"
-					"        -S:file     = screening file [.SCR]\r\n"
-					"        -O:file     = output [.ASM]\r\n"
-					"        -P:file     = listing output [.PRN]\r\n"
-					"        -E:file     = one or more equate files [.EQU]\r\n"
-					"        -M:file     = one or more symbol tables [.MAP]\r\n"
-					"        -W[W]       = [super] wide mode\r\n"
-					"        -NE         = no new EQUates\r\n"
-					"        -NH         = no header\r\n"
-					"        -NQ         = no single quotes\r\n"
+					"DASM80 [-H:file]|[[-C:]file] [-S:file] [-O:file]|[-P:file] [-E:file [-E:file...]]\r\n"
+					"       [-M:file [-M:file...]] [-W[W]] [-NE] [-NH] [-NQ] [--ZMAC]\r\n"
+					"where:  -H:file      = code file in hex intel format [.HEX]\r\n"
+					"        [-C:]file    = code file in DOS loader format [.CMD]\r\n"
+					"        -B[org]:file = code file in binary [.BIN]\r\n"
+					"        -S:file      = screening file [.SCR]\r\n"
+					"        -O:file      = output [.ASM]\r\n"
+					"        -P:file      = listing output [.PRN]\r\n"
+					"        -E:file      = one or more equate files [.EQU]\r\n"
+					"        -M:file      = one or more symbol tables [.MAP]\r\n"
+					"        -W[W]        = [super] wide mode\r\n"
+					"        -NE          = no new EQUates\r\n"
+					"        -NH          = no header\r\n"
+					"        -NQ          = no single quotes\r\n"
+					"        --ZMAC       = ZMAC compatibility\r\n"
 					, stderr );
 				errexit( 0 );
 				break;
@@ -1013,7 +1126,7 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	if ( !*hexfilename && !*cmdfilename )
+	if ( !*hexfilename && !*cmdfilename && !*binfilename )
 	{
 		errprintf( "*** Missing input filename." );
 		errexit( 1 );
@@ -1036,11 +1149,18 @@ int main(int argc, char* argv[])
 	setZ80MemIO( getdata );
 
 	if ( *hexfilename )
+	{
 		tra = hexload( hexfilename );
+	}
 
 	if ( *cmdfilename )
 	{
 		tra = loadcmdfile( cmdfilename );
+	}
+
+	if ( *binfilename )
+	{
+		tra = binload( binfilename, org );
 	}
 
 	pseg = getsegment( tra );
@@ -1143,8 +1263,10 @@ int main(int argc, char* argv[])
 					printaddr( sym->lval );
 					fprintf( out, "%s\tEQU\t", sym->name );
 					printhexword( sym->val ); //////////////////////////////
+					if ( *sym->comment )
+						fprintf( out, "\t\t%s", sym->comment );
 					printeol();
-				}	
+				}
 			}
 			printeol();
 			break;
@@ -1158,7 +1280,7 @@ int main(int argc, char* argv[])
 			ushort pcend = ranges[nrange].end;
 			ushort nqchars;
 
-			for ( pc = pcbeg; pc < pcend; )
+			for ( pc = pcbeg; ( pc < pcend || ( pc<0x10000 && !pcend ) ); )
 			{
 				ushort pc0, segbegin = 0, segend = 0xFFFF;
 				int segoffset = 0;
@@ -1259,11 +1381,12 @@ int main(int argc, char* argv[])
 						{
 							--pcoffsetseg;
 							pcoffset = 0;
-							getlabel( pc0, 1 );
+							//getlabel( pc0, 1 ); 	// moved down
 							offset = segoffset;
 							pcoffset = segoffset;
 							pcoffsetbeg = segoffsetbeg;
 							pcoffsetend = segoffsetend;
+							getlabel( pc0, 1 ); 	// moved here
 						}
 					}
 
@@ -1286,6 +1409,7 @@ int main(int argc, char* argv[])
 					org = pc;
 					break;
 				case 2: // generate output
+					// Generate new origin with DS/EQU/ORG
 					if ( pc0 != org || offset != segoffset )
 					{
 						skip = 0;
@@ -1293,10 +1417,13 @@ int main(int argc, char* argv[])
 						if ( org < 0xFFFF /* && *getlabel( org ) */)
 						{
 							printeol();
+
+							//	label	DS		nnnn
 							for ( pc = org + 1; pc <= pc0 /*&& pc <= segend */&& pc <= org + dsmax; ++pc )
 							{
 								if ( pc == pc0 || *getlabel( pc, 1 ) )
 								{
+									printLabelComment( org );
 									printaddr( org );
 									fprintf( out, "%s\tDS\t", getlabel( org, 1 ) );
 									setlabelgen( org );
@@ -1306,8 +1433,10 @@ int main(int argc, char* argv[])
 								}
 							}
 
+							//	label	EQU		$
 							if ( pc0 != org && *getlabel( org, 1 ) )
 							{
+								printLabelComment( org );
 								printaddr( org );
 								fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 								setlabelgen( org );
@@ -1317,28 +1446,45 @@ int main(int argc, char* argv[])
 
 						pc = pc0;
 
+						// PHASE change
 						if ( offset != segoffset )
 						{
 							--pcoffsetseg;
 							printeol();
 
+							// end PHASE
+							//			ORG		$-ORG$+LORG$
+							//			LORG	$
 							if ( offset )
 							{
 								printeol();
 
-								printaddr( pc0 );
-								fputs( "\tORG\t$-ORG$+LORG$", out );
-								printeol();
-								_TRACE_( "*** ORG $-ORG$+LORG$\n" );
+								if ( zmac )
+								{
+									printaddr( pc0 );
+									fputs( "\tDEPHASE", out );
+									printeol();
+									printeol();
+									_TRACE_( "*** DEPHASE\n" );
+								}
+								else
+								{
+									printaddr( pc0 );
+									fputs( "\tORG\t$-ORG$+LORG$", out );
+									printeol();
+									_TRACE_( "*** ORG $-ORG$+LORG$\n" );
 
-								printaddr( pc0 );
-								fputs( "\tLORG\t$", out );
-								printeol();
-								_TRACE_( "*** LORG $\n" );
+									printaddr( pc0 );
+									fputs( "\tLORG\t$", out );
+									printeol();
+									_TRACE_( "*** LORG $\n" );
+								}
 							}
 
 							pcoffset = 0;
 
+							// New ORG
+							//			ORG		nnnn
 							if ( pc0 != org )
 							{
 								printeol();
@@ -1349,40 +1495,58 @@ int main(int argc, char* argv[])
 								printeol();
 							}
 
+							// New PHASE block
+							//	LORG$	DEFL	$
+							//	label	EQU		$
+							//			ORG		nnnn
+							//	ORG$	DEFL	$
+							//			LORG	LORG$
 							if ( segoffset )
 							{
-
-								printaddr( pc0 );
-								fputs( "LORG$\tDEFL\t$", out );
-								printeol();
-
-								printeol();
-
-								if ( *getlabel( pc0, 1 ) )
+								if ( zmac )
 								{
-									printaddr( org );
-									fprintf( out, "%s\tEQU\t$", getxaddr( pc0 ) );
-									setlabelgen( pc0 );
 									printeol();
+									printaddr( pc0 );
+									fprintf( out, "\tPHASE\t%s", getxaddr( pc0 - segoffset ) );
+									printeol();
+									printeol();
+									_TRACE_( "*** PHASE %s\n", getxaddr( pc0 - segoffset ) );
 								}
+								else
+								{
 
-								printeol();
+									printaddr( pc0 );
+									fputs( "LORG$\tDEFL\t$", out );
+									printeol();
 
-								printaddr( pc0 - segoffset );
-								fprintf( out, "\tORG\t%s", getxaddr( pc0 - segoffset ) );
-								printeol();
+									printeol();
 
-								printaddr( pc0 );
-								fputs( "ORG$\tDEFL\t$", out );
-								printeol();
+									if ( *getlabel( pc0, 1 ) )
+									{
+										printaddr( org );
+										fprintf( out, "%s\tEQU\t$", getxaddr( pc0 ) );
+										setlabelgen( pc0 );
+										printeol();
+									}
 
-								printaddr( pc0 );
-								fputs( "\tLORG\tLORG$", out );
-								printeol();
+									printeol();
 
-								printeol();
+									printaddr( pc0 - segoffset );
+									fprintf( out, "\tORG\t%s", getxaddr( pc0 - segoffset ) );
+									printeol();
 
-								_TRACE_( "*** ORG=%04X %s LORG=%04X\n", pc0-segoffset, getxaddr( pc0 - segoffset ), pc0 );
+									printaddr( pc0 );
+									fputs( "ORG$\tDEFL\t$", out );
+									printeol();
+
+									printaddr( pc0 );
+									fputs( "\tLORG\tLORG$", out );
+									printeol();
+
+									printeol();
+
+									_TRACE_( "*** ORG=%04X %s LORG=%04X\n", pc0-segoffset, getxaddr( pc0 - segoffset ), pc0 );
+								}
 							}
 							/*else
 							{
@@ -1448,6 +1612,7 @@ int main(int argc, char* argv[])
 						skip = 0;
 					}
 
+					printLabelComment( pc0 );
 
 					switch( type )
 					{
@@ -1466,7 +1631,7 @@ int main(int argc, char* argv[])
 						printlabel( pc0 );
 						fprintf( out, "DB\t" );
 						printhexbyte( getdata( pc++ ) );
-						while ( pc < pcend && pc < segend && pc < pc0+8 && !*getlabel( pc, 0 ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc, 0 ) )
 						{
 							fputc( ',', out  );
 							printhexbyte( getdata( pc++ ) );
@@ -1498,7 +1663,7 @@ int main(int argc, char* argv[])
 							w += 2;
 						}
 
-						while ( pc < pcend && pc < segend && w + (isquote?2:5) < width && !*getlabel( pc, 0 ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && w + (isquote?2:5) < width && !*getlabel( pc, 0 ) )
 						{
 							ch = getdata( pc );
 							if ( ch < 0x20 || ch >= 0x7F || ( ( nqchars < 2 || nosquot ) && ch == '\'' ) )
@@ -1539,14 +1704,14 @@ int main(int argc, char* argv[])
 						printlabel( pc0 );
 #if 1
 						fprintf( out, "DW\t%s", getladdr() );
-						while ( pc < pcend && pc < segend && pc < pc0+8 && !*getlabel( pc-1, 0 ) && !*getlabel( pc, 0 ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc-1, 0 ) && !*getlabel( pc, 0 ) )
 						{
 							fprintf( out, ",%s", getladdr() );
 						}
 #else
 						fprintf( out, "DW\t%s", getxaddr( getdata( pc ) | ( getdata( pc+1 ) << 8 ) ) );
 						pc += 2;
-						while ( pc < pcend && pc < segend && pc < pc0+8 && !*getlabel( pc-1 ) && !*getlabel( pc ) )
+						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc-1 ) && !*getlabel( pc ) )
 						{
 							fprintf( out, ",%s", getxaddr( getdata( pc ) | ( getdata( pc+1 ) << 8 ) ) );
 							pc += 2;
@@ -1559,10 +1724,12 @@ int main(int argc, char* argv[])
 					for ( ++pc0; pc0 < pc; ++pc0 )
 					{
 						s = getlabel( pc0, 0 );
+
+						//	label	EQU		$-dd
 						if ( *s )
 						{
 							printaddr( org );
-							fprintf( out, "%s\tEQU\t$-%d", getxaddr( pc0 ), pc-pc0 );
+							fprintf( out, "%s\tEQU\t$-%d", /*getxaddr( pc0 )*/s, pc-pc0 );
 							printeol();
 						}
 					}
@@ -1594,10 +1761,13 @@ int main(int argc, char* argv[])
 		case 2:
 			// generate output
 			printeol();
+			// end of file remaining labels:
+			//	label	EQU		$+nnnn
 			for ( pc = org + 1; pc < 0xFFFF && pc <= org + dsmax; ++pc )
 			{
 				if ( *getlabel( pc, 1 ) )
 				{
+					printLabelComment( org );
 					printaddr( org );
 					fprintf( out, "%s\tDS\t", getlabel( org, 1 ) );
 					setlabelgen( org );
@@ -1607,8 +1777,11 @@ int main(int argc, char* argv[])
 				}
 			}
 
+			// end of file last label:
+			//	label	EQU		$
 			if ( *getlabel( org, 1 ) )
 			{
+				printLabelComment( org );
 				printaddr( org );
 				fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 				setlabelgen( org );
@@ -1623,6 +1796,34 @@ int main(int argc, char* argv[])
 			printeol();
 			break;
 		}
+	}
+
+	if ( isprintbytes )
+	{
+		fputs( "** Symbols Table **", out );
+		printeol();
+		printeol();
+		fputs( "Name\t\tSeg Flags Addr  Comment", out );
+		printeol();
+		fputs( "------------------------------------------------------------", out );
+		printeol();
+		for ( i=0; i<getNumZ80Symbols(); ++i )
+		{
+			//if ( !symbols[i].ref )
+			//	continue;
+			fprintf( out, "%-15s %c   %c%c%c%c  %04X  %s", 
+				symbols[i].name, symbols[i].seg, symbols[i].gen?' ':'!', symbols[i].newsym ?'+':' ', 
+				symbols[i].ref ?' ':'?', symbols[i].label ?' ':'=', symbols[i].val, symbols[i].comment );
+			printeol();
+		}
+		printeol();
+		fputs( "Flags:\n", out );
+		fputs( "------\n", out );
+		fputs( "! Not generated\n", out );
+		fputs( "+ New symbol\n", out );
+		fputs( "? Not referenced\n", out );
+		fputs( "= EQUate\n", out );
+
 	}
 
 	if ( *outfilename )
