@@ -11,17 +11,19 @@
 
    The following options are supported:
 
-     -c:<file> Input file <file> in TRS-80 /CMD format ("-c:" is optional)
-     -h:<file> Input file <file> in Intel HEX format
-     -s:<file> Use <file>.SCR as a screening data file.
-     -e:<file> Use <file>.EQU as an EQUate label definition file
-     -m:<file> Use <file>.MAP as a MAP file
-     -o:<file> Write disassembled source to <file>.ASM instead of screen.
-     -p:<file> Write disassembly listing  to <file>.PRN instead of screen.
-     -w -ww    Use wide (63)/superwide(79) format
-     -ne       Don't generate new EQUates
-     -nh       Don't generate header lines
-     -nq       Don't generate literal single quotes ('aaaaa''aa')
+     -c:file       Input file in TRS-80 /CMD format ("-c:" is optional)
+     -h:file       Input file in Intel HEX format
+     -b[org]:file  Input file in binary format
+     -o:file       Write disassembled source to <file>.ASM instead of screen.
+     -p:file       Write disassembly listing  to <file>.PRN instead of screen.
+     -s:file       Use file.SCR as a screening data file.
+     -e:file       Use file.EQU as an EQUate label definition file
+     -m:file       Use file.MAP as a MAP file
+     -w -ww        Use wide (63)/superwide(79) format
+     -ne           Don't generate new EQUates
+     -nh           Don't generate header lines
+     -nq           Don't generate literal single quotes ('aaaaa''aa')
+     --zmac        ZMAC compatibility (PHASE/DEPHASE)
    
    
    For example, to disassemble the program SCRIPSIT.CMD to the screen, the command line
@@ -46,7 +48,8 @@
 
    Four different types of address ranges are supported:
 
-     aaaa      one or two bytes at aaaa (two bytes for word data #aaaa)
+     aaaa      one to three bytes at aaaa (two bytes for word data #aaaa,
+               three bytes for jump tables)
      bbbb-cccc a range from bbbb to cccc
      -dddd     a range from 0x0000 to dddd
      eeee-     a range from eeee to 0xFFFE or to start of next range - 1
@@ -57,9 +60,11 @@
      % identify as byte data (the default)
      $ identify as char data
      # identify as word data
+     / identify as jump table (DB/DW pairs)
 
    Additionnally, relocatable ranges can be defined anywhere in the screening file.
-   Relocatable ranges generate MRAS ORG/LORG sequences of pseudo-instructions.
+   Relocatable ranges generate MRAS ORG/LORG sequences of pseudo-instructions, or
+   ZMAC PHASE/DEPHASE pseudo-instructions if the --zmac flag is specified.
    The relocatable range definitions apply for all subsequent regular ranges defined
    in the screening file, until a new relocatable range is defined.
    Relocatable ranges are defined as:
