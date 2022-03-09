@@ -4,7 +4,7 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.20beta2+DEV - (c) 2015-20 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.20beta2+DEV - (c) 2015-22 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
@@ -56,10 +56,45 @@ static void pause()
 static void usage()
 {
 	fputs(	"\n"
-			"usage: dasm80 [-C:]infile[.cmd]|-H:infile[.hex] [-O:outfile[.asm]|-P:outfile[.prn]] [-options]\n"
-			"              options: -S:file -E:file -M:file -NE -NQ -NH -W[W]\n"
+			"usage: dasm80 [-C:]infile[.CMD]|-H:infile[.HEX]|-B[org]:infile[.BIN] [-O:outfile[.ASM]|-P:outfile[.PRN]] [-options]\n"
+			"              options: -S:file -E:file -M:file -NE -NQ -NH -W[W] --ZMAC\n"
 			"       dasm80 -?  for more details about options.\n"
 			, stderr );
+}
+
+static void help()
+{
+	fputs ( "\r\n"
+		"DASM80 [[-C:]file]|[-H:file]|[-B[org]:file] [-O:file]|[-P:file]\r\n"
+		"       [-S:file ] [-E:file [-E:file...]] [-M:file [-M:file...]]\r\n"
+		"       [-W[W]] [-NE] [-NH] [-NQ] [--ZMAC]\r\n"
+		"where:  [-C:]file    = code file in DOS loader format [.CMD]\r\n"
+		"        -H:file      = code file in hex intel format [.HEX]\r\n"
+		"        -B[org]:file = code file in binary [.BIN]\r\n"
+		"        -O:file      = output [.ASM]\r\n"
+		"        -P:file      = listing output [.PRN]\r\n"
+		"        -S:file      = screening file [.SCR]\r\n"
+		"        -E:file      = one or more equate files [.EQU]\r\n"
+		"        -M:file      = one or more symbol tables [.MAP]\r\n"
+		"        -W[W]        = [super] wide mode\r\n"
+		"        -NE          = no new EQUates\r\n"
+		"        -NH          = no header\r\n"
+		"        -NQ          = no single quotes\r\n"
+		"        --ZMAC       = ZMAC compatibility\r\n"
+		"\n"
+		"Screening file:\r\n"
+		"        ;comment     = a comment\r\n"
+		"        !range       = a range of code lines\r\n"
+		"        %range       = a range of DB byte data byte\r\n"
+		"        $range       = a range of DB char data\r\n"
+		"        #range       = a range of DW word data\r\n"
+		"        /range       = a range of DB/DW jump table data\r\n"
+		"        @range:dest  = a relocatable range (@0000 to stop)\r\n"
+		"range:  aaaa         = one to three bytes at aaaa\r\n"
+		"        bbbb-cccc    = a range from bbbb to cccc\r\n"
+		"        -dddd        = a range from 0000 to dddd\r\n"
+		"        eeee-        = a range from eeee to FFFEh\r\n"
+		, stderr );
 }
 
 static void errexit( int ex )
@@ -79,7 +114,7 @@ typedef struct segment
 	ushort	offsetend;
 } segment_t;
 
-enum{ SEG_CODE='!', SEG_BYTE='%', SEG_WORD='#', SEG_CHAR='$' };
+enum{ SEG_CODE='!', SEG_BYTE='%', SEG_WORD='#', SEG_CHAR='$', SEG_JUMP='/' };
 
 static segment_t segments[SYMSIZE];
 static int nsegments = 0;
@@ -278,6 +313,7 @@ static void symload(char *filename)
 			$ = range of DB chars
 			# = range of DW words
 			! = range of code
+			/ = range of (DB chars, DW words)
 	*/
 static void scrload( char *filename )
 {
@@ -321,7 +357,7 @@ static void scrload( char *filename )
 				if ( s[n] == ';' )
 					break;
 
-				if ( s[n] == '$' || s[n] == '#' || s[n] == '%' || s[n] == '!' || s[n] == '@' )
+				if ( s[n] == '$' || s[n] == '#' || s[n] == '%' || s[n] == '!' || s[n] == '/' || s[n] == '@' )
 				{
 					type = s[n];
 					//if ( type=='#' ) type = '%';
@@ -379,7 +415,7 @@ static void scrload( char *filename )
 						if ( pseg = getsegment( beg ) )
 							type0 = pseg->type;
 						if ( pval == &beg )
-							end = beg + ( type == SEG_WORD ? 1 : 0 );
+							end = beg + ( type == SEG_WORD ? 1 : 0 ) + ( type == SEG_JUMP ? 2 : 0 );
 						if ( end && getsegment( end+1 ) == pseg )
 							addsegment( end+1, type0, offset, offsetbeg, offsetend ); // or old offset?
 						addsegment( beg, type, offset, offsetbeg, offsetend );
@@ -905,6 +941,7 @@ int main(int argc, char* argv[])
 	int i, npass, nrange;
 	char *s;
 	uchar ch;
+	ushort word;
 
 	char outfilename[80];
 	char hexfilename[80];
@@ -919,7 +956,7 @@ int main(int argc, char* argv[])
 	int  zmac = 0;
 	char nonewsymflag  = 0;
 	char noheader = 0;
-	unsigned short tra = 0;
+	ushort tra = 0;
 	segment_t *pseg = 0;
 	char type;
 	char outformat = 'A';
@@ -1090,23 +1127,7 @@ int main(int argc, char* argv[])
 				getchar();
 				break;
 			case '?':	// Help
-				fputs ( "\r\n"
-					"DASM80 [-H:file]|[[-C:]file] [-S:file] [-O:file]|[-P:file] [-E:file [-E:file...]]\r\n"
-					"       [-M:file [-M:file...]] [-W[W]] [-NE] [-NH] [-NQ] [--ZMAC]\r\n"
-					"where:  -H:file      = code file in hex intel format [.HEX]\r\n"
-					"        [-C:]file    = code file in DOS loader format [.CMD]\r\n"
-					"        -B[org]:file = code file in binary [.BIN]\r\n"
-					"        -S:file      = screening file [.SCR]\r\n"
-					"        -O:file      = output [.ASM]\r\n"
-					"        -P:file      = listing output [.PRN]\r\n"
-					"        -E:file      = one or more equate files [.EQU]\r\n"
-					"        -M:file      = one or more symbol tables [.MAP]\r\n"
-					"        -W[W]        = [super] wide mode\r\n"
-					"        -NE          = no new EQUates\r\n"
-					"        -NH          = no header\r\n"
-					"        -NQ          = no single quotes\r\n"
-					"        --ZMAC       = ZMAC compatibility\r\n"
-					, stderr );
+				help();
 				errexit( 0 );
 				break;
 			default:
@@ -1116,7 +1137,7 @@ int main(int argc, char* argv[])
 		}
 		else
 		{
-			if ( *hexfilename || *cmdfilename )
+			if ( *hexfilename || *cmdfilename || *binfilename )
 			{
 				errprintf( "*** %s - Only one input file allowed.", argv[i] );
 				errexit( 1 );
@@ -1342,6 +1363,15 @@ int main(int argc, char* argv[])
 						pc+=2;
 #endif
 						break;
+					case SEG_JUMP:
+						++pc;
+#if 1
+						getladdr();
+#else
+						getxaddr( getdata( pc ) | ( getdata( pc+1 ) << 8 ) );
+						pc+=2;
+#endif
+						break;
 					}
 					org = pc;
 					break;
@@ -1400,6 +1430,10 @@ int main(int argc, char* argv[])
 						++pc;
 						break;
 					case SEG_WORD:
+						getladdr();
+						break;
+					case SEG_JUMP:
+						++pc;
 						getladdr();
 						break;
 					}
@@ -1717,6 +1751,25 @@ int main(int argc, char* argv[])
 							pc += 2;
 						}
 #endif						
+						break;
+					case SEG_JUMP:
+						printaddr( pc0 );
+						printlabel( pc0 );
+						fprintf( out, "DB\t" );
+						printhexbyte( ch = getdata( pc++ ) );
+						if ( ch >= ' ' && ch < 0x7F )
+							fprintf( out, "\t\t;'%c'", ch );
+						printeol();
+						printaddr( pc );
+						printlabel( pc );
+#if 1
+						fprintf( out, "DW\t%s", word = getladdr() );
+#else
+						fprintf( out, "DW\t%s", word = getxaddr( getdata( pc ) | ( getdata( pc+1 ) << 8 ) ) );
+						pc += 2;
+#endif
+						if ( getLastComment() )
+							fprintf( out, "\t\t%s", getLastComment() );
 						break;
 					}
 					printeol();
