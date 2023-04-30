@@ -44,6 +44,8 @@ char* source();
 extern uint		pc;
 
 extern char		nonewequ;
+extern char		labelcolon;
+extern char		usesvc;
 
 extern int		nZ80symbols;
 extern symbol_t	*Z80symbols;

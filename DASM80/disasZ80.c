@@ -74,6 +74,7 @@ char regnames[][3] = { "??",
 
 char			nonewequ = 0;
 char			labelcolon = 0;
+char			usesvc = 0;
 
 int				useix, useiy;
 signed char		offset;
@@ -90,6 +91,7 @@ uint			nZ80symbols = 0;
 uint			nNewZ80symbols = 0;
 
 static char		*comment;
+static char		commentline[40];
 
 int				usedextopcodes[32] = { 0 };
 uint			nusedextopcodes = 0;
@@ -458,7 +460,7 @@ char* getoperand (int opcode, int pos)
 		return getladdr ();
 	case BYTE:
 		x = fetch ();
-		if ( opcode == 0x3E && getdata( pc ) == 0xEF )
+		if ( usesvc && opcode == 0x3E && getdata( pc ) == 0xEF )
 		{
 			// if	LD		A, @svc
 			//		RST		28H
@@ -469,6 +471,11 @@ char* getoperand (int opcode, int pos)
 			sprintf (op, "%03XH", x);
 		else
 			sprintf (op, "%02XH", x);
+		if ( x >= ' ' && x < 0x80 )
+		{
+			comment = commentline;
+			sprintf( comment, "; '%c'", x );
+		}
 		break;
 	case ATR:
 	case ATPTR:
@@ -594,7 +601,7 @@ char* source ()
 		}
 	}
 
-	if ( opcode == 0x3E && getdata( pc + 1 ) == 0xEF )
+	if ( usesvc && opcode == 0x3E && getdata( pc + 1 ) == 0xEF )
 	{
 		if ( !svcmacro )
 		{
@@ -679,6 +686,7 @@ char* source ()
 	switch ( instr[opcode].mnemon )
 	{
 	case LD:
+	case CP:
 	case JP:
 	case JR:
 	case CALL:
@@ -699,6 +707,7 @@ char* source ()
 
 //  Processor's instruction set
 instr_t instr[] = {
+//		mnemon,			opn1,			opn2,			arg1,			arg2;
 // 00-0F
         NOP,            0,              0,              0,              0,
         LD,             RX,             WORD,           simBC,          0,

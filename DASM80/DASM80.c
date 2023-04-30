@@ -4,10 +4,18 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.20beta2+DEV - (c) 2015-22 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.31beta1+DEV - (c) 2015-22 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
+
+1.31b1:
+* NEW - --SVC to enable LS-DOS $SVC (RST 28H) macro generation
+* MOD - Generate DB 'x'+80H in SEG_CHAR segments
+* MOD - Generate ; 'x' comments to show ASCII equivalents of 8-bit literals
+
+1.30b1:
+* NEW - -LC to add a colon after labels; reformatted commented and long labels
 
 1.02b8:
 * FIX - DS/EQU$ labels generated more than once (LDOS SYS0/SYS)
@@ -57,7 +65,7 @@ static void usage()
 {
 	fputs(	"\n"
 			"usage: dasm80 [-C:]infile[.CMD]|-H:infile[.HEX]|-B[org]:infile[.BIN] [-O:outfile[.ASM]|-P:outfile[.PRN]] [-options]\n"
-			"              options: -S:file -E:file -M:file -NE -NQ -NH -W[W] --ZMAC\n"
+			"              options: -S:file -E:file -M:file -NE -NQ -NH -W[W] -LC --ZMAC\n"
 			"       dasm80 -?  for more details about options.\n"
 			, stderr );
 }
@@ -65,9 +73,9 @@ static void usage()
 static void help()
 {
 	fputs ( "\r\n"
-		"DASM80 [[-C:]file]|[-H:file]|[-B[org]:file] [-O:file]|[-P:file]\r\n"
+		"DASM80 [-C:]file|-H:file|-B[org]:file [-O:file|-P:file]\r\n"
 		"       [-S:file ] [-E:file [-E:file...]] [-M:file [-M:file...]]\r\n"
-		"       [-W[W]] [-NE] [-NH] [-NQ] [--ZMAC]\r\n"
+		"       [-W[W]] [-NE] [-NH] [-NQ] [-LC] [--ZMAC]\r\n"
 		"where:  [-C:]file    = code file in DOS loader format [.CMD]\r\n"
 		"        -H:file      = code file in hex intel format [.HEX]\r\n"
 		"        -B[org]:file = code file in binary [.BIN]\r\n"
@@ -80,6 +88,8 @@ static void help()
 		"        -NE          = no new EQUates\r\n"
 		"        -NH          = no header\r\n"
 		"        -NQ          = no single quotes\r\n"
+		"        -LC          = add colon after labels\r\n"
+		"        --SVC        = generate LS-DOS SVC calls\r\n"
 		"        --ZMAC       = ZMAC compatibility\r\n"
 		"\n"
 		"Screening file:\r\n"
@@ -825,11 +835,29 @@ static void printchars( ushort pc0, ushort pc )
 
 static void printlabel( ushort addr )
 {
-	char *s;
-	s = getlabel( addr, 0 );
-	fputs( s, out );
-	//if ( strlen( s ) < 8 )
+	char *lbl;
+	lbl = getlabel( addr, 0 );
+	if ( *lbl )
+	{
+		fputs( lbl, out );
+	}
+	//if ( !labelcolon || strlen( lbl ) < 8 )
 		fputc( '\t', out );
+}
+
+static void printlabelIfNotDoneInComment( ushort addr )
+{
+	char *cmt, *lbl;
+	lbl = getlabel( addr, 0 );
+	cmt = getLastComment();
+	if ( !cmt && strlen( lbl ) < 8 )
+	{
+		printlabel( addr );
+	}
+	else
+	{
+		fputc( '\t', out );
+	}
 }
 
 static void printhexbyte( uchar byte )
@@ -853,16 +881,22 @@ static void printeol()
 	fprintf( out, eol );
 }
 
-static void printLabelComment( uint address )
+static void printLabelComment( ushort addr, uchar ds )
 {
-	getlabel( address, 1 );
-	if ( getLastComment() )
+	char *lbl, *cmt;
+	lbl = getlabel( addr, ds );
+	cmt = getLastComment();
+	if ( cmt || strlen( lbl ) >= 8 )
 	{
 		if ( isprintbytes )
 		{
-			fputs( "\t\t", out );
+			//fputs( "\t\t", out );
+			fprintf( out, "=%04X\t\t", addr );
 		}
-		fprintf( out, "\t%s\n", getLastComment() );
+		lbl = getlabel( addr, 0 );
+		printlabel( addr );
+		
+		fprintf( out, "%s\n", cmt ? cmt : "" );
 	}
 }
 
@@ -1112,8 +1146,22 @@ int main(int argc, char* argv[])
 					--s;
 				}
 				break;
+			case 'L':	// Labels
+				switch( toupper( *s++ ) )
+				{
+				case 'C':	// Colon after labels
+					labelcolon = 1;
+					break;
+				default:
+					--s;
+				}
+				break;
 			case '-':
 				if ( !stricmp( s, "zmac" ) )
+				{
+					zmac = 1;
+				}
+				else if ( !stricmp( s, "svc" ) )
 				{
 					zmac = 1;
 				}
@@ -1220,6 +1268,11 @@ int main(int argc, char* argv[])
 			if ( *cmdfilename )
 			{
 				fprintf( out, ";\tDisassembly of : %s", cmdfilename );
+				printeol();
+			}
+			else if ( *binfilename )
+			{
+				fprintf( out, ";\tDisassembly of : %s", binfilename );
 				printeol();
 			}
 			else if ( *hexfilename )
@@ -1457,7 +1510,7 @@ int main(int argc, char* argv[])
 							{
 								if ( pc == pc0 || *getlabel( pc, 1 ) )
 								{
-									printLabelComment( org );
+									printLabelComment( org, 1 );
 									printaddr( org );
 									fprintf( out, "%s\tDS\t", getlabel( org, 1 ) );
 									setlabelgen( org );
@@ -1470,7 +1523,7 @@ int main(int argc, char* argv[])
 							//	label	EQU		$
 							if ( pc0 != org && *getlabel( org, 1 ) )
 							{
-								printLabelComment( org );
+								printLabelComment( org, 1 );
 								printaddr( org );
 								fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 								setlabelgen( org );
@@ -1646,23 +1699,23 @@ int main(int argc, char* argv[])
 						skip = 0;
 					}
 
-					printLabelComment( pc0 );
+					printLabelComment( pc0, 0 );
 
 					switch( type )
 					{
 					case SEG_CODE:
 						ch = getdata( pc0 );
-						// add blank line on JR, JP, RET, JP (HL), JP (IX) or JP (IY)
+						// add blank line after JR, JP, RET, JP (HL), JP (IX) or JP (IY)
 						skip = ch == 0x18 || ch == 0xC3 || ch == 0xC9 || ch == 0xE9
 								|| ( ( ch == 0xDD || ch == 0xFD ) && getdata( pc0+1 ) == 0xE9 );
 						printbytes( pc0 );
-						printlabel( pc0 );
+						printlabelIfNotDoneInComment( pc0 );
 						fputs( packsource(), out );
 						printchars( pc0, pc );
 						break;
 					case SEG_BYTE:
 						printaddr( pc0 );
-						printlabel( pc0 );
+						printlabelIfNotDoneInComment( pc0 );
 						fprintf( out, "DB\t" );
 						printhexbyte( getdata( pc++ ) );
 						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc, 0 ) )
@@ -1673,15 +1726,25 @@ int main(int argc, char* argv[])
 						break;
 					case SEG_CHAR:
 						printaddr( pc0 );
-						printlabel( pc0 );
+						printlabelIfNotDoneInComment( pc0 );
 						ch = getdata( pc++ );
 						w = 16;
 						fputs( "DB\t", out );
 						nqchars = 0;
 						if ( ch < 0x20 || ch >= 0x7F || ( /*nosquot && */ ch == '\'' ) )
 						{	// no starting squote for MRAS
-							printhexbyte( ch );
-							w += ch < 0xA0 ? 3 : 4;
+							if ( ch >= 0xA0 && ch < 0xFF && ch != '\'' + 0x80 )
+							{
+								fputc( '\'', out );
+								fputc( ch & 0x7F, out );
+								fputs( "\'+80H", out );
+								w += 7;
+							}
+							else
+							{
+								printhexbyte( ch );
+								w += ch < 0xA0 ? 3 : 4;
+							}
 						}
 						else
 						{
@@ -1709,8 +1772,18 @@ int main(int argc, char* argv[])
 								}
 								isquote = 0;
 								fputc( ',', out );
-								printhexbyte( ch );
-								w += ch < 0xA0 ? 4 : 5;
+								if ( ch >= 0xA0 && ch < 0xFF && ch != '\'' + 0x80 )
+								{
+									fputc( '\'', out );
+									fputc( ch & 0x7F, out );
+									fputs( "\'+80H", out );
+									w += 8;
+								}
+								else
+								{
+									printhexbyte( ch );
+									w += ch < 0xA0 ? 4 : 5;
+								}
 								nqchars = 0;
 							}
 							else
@@ -1735,7 +1808,7 @@ int main(int argc, char* argv[])
 						break;
 					case SEG_WORD:
 						printaddr( pc0 );
-						printlabel( pc0 );
+						printlabelIfNotDoneInComment( pc0 );
 #if 1
 						fprintf( out, "DW\t%s", getladdr() );
 						while ( ( pc < pcend || pc<0x10000 && !pcend ) && pc < segend && pc < pc0+8 && !*getlabel( pc-1, 0 ) && !*getlabel( pc, 0 ) )
@@ -1754,11 +1827,11 @@ int main(int argc, char* argv[])
 						break;
 					case SEG_JUMP:
 						printaddr( pc0 );
-						printlabel( pc0 );
+						printlabelIfNotDoneInComment( pc0 );
 						fprintf( out, "DB\t" );
 						printhexbyte( ch = getdata( pc++ ) );
 						if ( ch >= ' ' && ch < 0x7F )
-							fprintf( out, "\t\t;'%c'", ch );
+							fprintf( out, "\t\t; '%c'", ch );
 						printeol();
 						printaddr( pc );
 						printlabel( pc );
@@ -1820,7 +1893,7 @@ int main(int argc, char* argv[])
 			{
 				if ( *getlabel( pc, 1 ) )
 				{
-					printLabelComment( org );
+					printLabelComment( org, 1 );
 					printaddr( org );
 					fprintf( out, "%s\tDS\t", getlabel( org, 1 ) );
 					setlabelgen( org );
@@ -1834,7 +1907,7 @@ int main(int argc, char* argv[])
 			//	label	EQU		$
 			if ( *getlabel( org, 1 ) )
 			{
-				printLabelComment( org );
+				printLabelComment( org, 1 );
 				printaddr( org );
 				fprintf( out, "%s\tEQU\t$", getxaddr( org ) );
 				setlabelgen( org );
