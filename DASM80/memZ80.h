@@ -5,16 +5,16 @@
 
 typedef struct
 {
-	unsigned short beg, end;
+	unsigned int beg, end;
 } range_t;
 
 extern range_t ranges[];
-extern unsigned nranges;
+extern unsigned nRanges;
 
-// TRS-80 Data Write Routine (memory address space)
-unsigned char putdata( unsigned short addr, unsigned char byte );
+// Data Write Routine (memory address space)
+unsigned char putData( unsigned short addr, unsigned char byte );
 
-// TRS-80 Data Read Routine (memory address space)
-unsigned char getdata( unsigned short addr );
+// Data Read Routine (memory address space)
+unsigned char getData( unsigned short addr );
 
 #endif
