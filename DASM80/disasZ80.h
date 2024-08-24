@@ -4,11 +4,10 @@
 typedef unsigned int uint;
 typedef unsigned char uchar;
 typedef unsigned long ulong;
-typedef unsigned long ushort; //TODO: check
+typedef unsigned int ushort; //TODO: unsigned short causes 10000H to be never reached
 
 typedef int (*compfptr_t)(const void*, const void*);
-typedef uchar (*readfptr_t)( ushort );
-typedef uchar (*writefptr_t)( ushort, uchar );
+typedef unsigned char (*readfptr_t)( unsigned short );
 
 typedef struct symbol_t { char    name[41];
                         uint    val;
@@ -22,34 +21,35 @@ typedef struct symbol_t { char    name[41];
 						char	comment[61];
                       } symbol_t;
 
+enum { DS_NO = 0, DS_YES = 1 }; // Allow labels for DS
+
 // get label of given code address
-char* getlabel( uint val, char ds );
+char* getLabel( uint val, char ds );
 
 // set label generated (DS labels)
-void setlabelgen( uint val );
+void setLabelGen( uint val );
 
 // get label of given code address
-char* getxaddr( uint val );
+char* getXAddr( uint val );
 
 // get comment associated to label of given code address from last getXAddr()/getLabel() call
 char* getLastComment();
 
 // fetch long external address and return it as hex string or as label
-char* getladdr();
+char* getLAddr();
 
 // get single instruction source
 char* source();
 
-// Z-80 simulator
 extern uint		pc;
 
-extern char		nonewequ;
+extern char		noNewEqu;
+extern char		labelColon;
+extern char		usesvc;
 
-extern int		nZ80symbols;
-extern symbol_t	*Z80symbols;
-extern int		pcoffset;
-extern ushort	pcoffsetbeg, pcoffsetend;
-extern char		pcoffsetseg;
+extern int		pcOffset;
+extern ushort	pcOffsetBeg, pcOffsetEnd;
+extern char		pcOffsetSeg;
 
 //  Forward declaration of array of instruction-processing functions for simulator
 typedef struct
@@ -57,29 +57,24 @@ typedef struct
 	int mnemon, opn1, opn2, arg1, arg2;
 } instr_t;
 
-extern instr_t instr[];
+char* getMacroLine( uint line );
 
-char* getmacroline( uint line );
+// Attach disassembler to external symbol table
+void setSymbols( symbol_t *pSymbols, int pNSymbols, int pSymbolsSize );
 
-// Attach Z80 to external symbol table
-void setZ80Symbols( symbol_t *pSymbols, int pNSymbols, int pSymbolsSize );
+void updateSymbols();
 
-void updateZ80Symbols();
+void resetSymbols();
 
-void resetZ80Symbols();
-
-int getNumZ80Symbols();
+uint getNumSymbols();
 
 // Attach Z80 to memory and I/O ports
-void setZ80MemIO( /*writefptr_t outdata, 
-				  readfptr_t indata, 
-				  writefptr_t putdata, */
-				 readfptr_t getdata );
+void setGetData( readfptr_t getData );
 
 // Sort symbols
-int  symsort(symbol_t *a, symbol_t *b);
+int  compareSymbolValues(symbol_t *a, symbol_t *b);
 
 // Compare symbols by name
-int  symcompname(symbol_t *a, symbol_t *b);
+int  compareSymbolNames(symbol_t *a, symbol_t *b);
 
 #endif

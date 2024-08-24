@@ -8,8 +8,6 @@
 #include <fcntl.h>
 #include <sys\stat.h>
 
-//#include "borl2ms.h"
-
 #include "disasZ80.h"
 
 #ifdef trace
@@ -24,7 +22,7 @@
 #	define tgetch()
 #endif
 
-// Z-80 DISASSEMBLER-SIMULATOR ////////////////////////////////////////////////
+// Z-80 DISASSEMBLER //////////////////////////////////////////////////////////
 
 const char false = 0;
 const char true  = -1;
@@ -32,7 +30,7 @@ const char true  = -1;
 
 
 //  Enumerated constants for instructions, also array subscripts
-enum {  NOP=0, LD, INC, DEC, ADD, SUB, ADC, SBC, AND, OR, XOR, RLCA,
+static enum {  NOP=0, LD, INC, DEC, ADD, SUB, ADC, SBC, AND, OR, XOR, RLCA,
         RRCA, RLA, RRA, EX, EXX, DJNZ, JR, JP, CALL, RET, RST, CPL, NEG, SCF, CCF,
         CP, IN, OUT, PUSH, POP, HALT, DI, EI, DAA, RLD, RRD,
         RLC, RRC, RL, RR, SLA, SRA, SLL, SRL, BIT, RES, SET,
@@ -46,7 +44,7 @@ enum {  NOP=0, LD, INC, DEC, ADD, SUB, ADC, SBC, AND, OR, XOR, RLCA,
         DEFB};
 
 //  Mnemonics for disassembler
-char mnemo[][9] = {
+static char mnemo[][9] = {
         "NOP", "LD", "INC", "DEC", "ADD", "SUB", "ADC", "SBC", "AND", "OR", "XOR", "RLCA",
         "RRCA", "RLA", "RRA", "EX", "EXX", "DJNZ", "JR", "JP", "CALL", "RET", "RST", "CPL", "NEG", "SCF", "CCF",
         "CP", "IN", "OUT", "PUSH", "POP", "HALT", "DI", "EI", "DAA", "RLD", "RRD",
@@ -62,80 +60,85 @@ char mnemo[][9] = {
         };
 
 //  Enumerated constants for operands, also array subscripts
-enum {R=1, RX, BYTE, WORD, OFFSET, ATR, ATRX, ATPTR, AFP,
+static enum {R=1, RX, BYTE, WORD, OFFSET, ATR, ATRX, ATPTR, AFP,
       Z, C, NZ, NC, PE, PO, P, M, ATBYTE, ATWORD, DIRECT, BITPOS };
 
 
-enum {simA=1, simB, simC, simD, simE, simH, simL, simI, simR, simBC, simDE, simHL, simAF, simSP, simIR};
+static enum {simA=1, simB, simC, simD, simE, simH, simL, simI, simR, simBC, simDE, simHL, simAF, simSP, simIR};
 
-char regnames[][3] = { "??",
+static char regnames[][3] = { "??",
     "A", "B", "C", "D", "E", "H", "L", "I", "R", "BC", "DE", "HL", "AF", "SP", "IR"
     } ;
 
-char			nonewequ = 0;
-char			labelcolon = 0;
+char			noNewEqu = 0;
+char			labelColon = 0;
+char			usesvc = 0;
 
-int				useix, useiy;
-signed char		offset;
 uint			pc;
 
-int				pcoffset = 0;
-ushort			pcoffsetbeg, pcoffsetend;
-char			pcoffsetseg = 'R';
+int				pcOffset = 0;
+ushort			pcOffsetBeg, pcOffsetEnd;
+char			pcOffsetSeg = 'R';
 
-// Symbols table
-symbol_t		*Z80symbols = NULL;
-uint			Z80symbolsSize = 0;
-uint			nZ80symbols = 0;
-uint			nNewZ80symbols = 0;
+static int		useix, useiy;
+static signed char	offset;
+
+// pSymbols table
+static symbol_t	*pSymbols = NULL;
+static uint		symbolsSize = 0;
+static uint		nSymbols = 0;
+static uint		nNewSymbols = 0;
 
 static char		*comment;
+static char		commentLine[40];
 
-int				usedextopcodes[32] = { 0 };
-uint			nusedextopcodes = 0;
-char			macrolines[260][40] = { 0 };
-uint			nmacrolines = 0;
-int				svcmacro = 0;
+static int		usedExtOpCodes[32] = { 0 };
+static uint		nUsedExtOpCodes = 0;
+static char		macroLines[260][40] = { 0 };
+static uint		nMacroLines = 0;
+static int		svcMacro = 0;
 
-char* getmacroline( uint line )
+char* getMacroLine( uint line )
 {
-	if ( line < nmacrolines )
-		return macrolines[line];
+	if ( line < nMacroLines )
+		return macroLines[line];
 	return 0;
 }
 
-void setZ80Symbols( symbol_t *pSymbols, int pNSymbols, int pSymbolsSize )
+//////// SYMBOLS //////////////////////////////////////////////////////////////
+
+void setSymbols( symbol_t *p_pSymbols, int p_nSymbols, int p_symbolsSize )
 {
-	Z80symbols = pSymbols;
-	nZ80symbols = pNSymbols;
-	nNewZ80symbols = nZ80symbols;
-	Z80symbolsSize = pSymbolsSize;
-	qsort(Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
+	pSymbols = p_pSymbols;
+	nSymbols = p_nSymbols;
+	nNewSymbols = nSymbols;
+	symbolsSize = p_symbolsSize;
+	qsort(pSymbols, nSymbols, sizeof(symbol_t), (compfptr_t)compareSymbolValues);
 }
 
-void updateZ80Symbols()
+void updateSymbols()
 {
-	setZ80Symbols( Z80symbols, nNewZ80symbols, Z80symbolsSize );
+	setSymbols( pSymbols, nNewSymbols, symbolsSize );
 }
 
-void resetZ80Symbols()
+void resetSymbols()
 {
-	int i;
+	uint i;
 
-	for ( i=0; i<nZ80symbols; ++i )
+	for ( i=0; i<nSymbols; ++i )
 	{
-		Z80symbols[i].gen = 0;
+		pSymbols[i].gen = 0;
 	}
 }
 
-int getNumZ80Symbols()
+uint getNumSymbols()
 {
-	return nZ80symbols;
+	return nSymbols;
 }
 
 // comparison function for qsort() and bsearch()
 
-int  symsort(symbol_t *a, symbol_t *b)
+static int  compareSymbolValues(symbol_t *a, symbol_t *b)
 {
     if (a->val < b->val) return -1;
     if (a->val > b->val) return 1;
@@ -144,24 +147,31 @@ int  symsort(symbol_t *a, symbol_t *b)
     return 0;
 }
 
-int  symcompname(symbol_t *a, symbol_t *b)
+static int  compareSymbolNames(symbol_t *a, symbol_t *b)
 {
-    return strcmp (a->name, b->name);
+    return strcmp( a->name, b->name );
 }
 
-static char getcodeseg()
+static symbol_t *searchSymbolByValue( symbol_t *symToFind )
 {
-	return pcoffset ? pcoffsetseg : 'C';
+	return bsearch(symToFind, pSymbols, nSymbols, sizeof(symbol_t), (compfptr_t)compareSymbolValues);
 }
 
+
+static char getCodeSeg()
+{
+	return pcOffset ? pcOffsetSeg : 'C';
+}
+
+//////// LABELS ///////////////////////////////////////////////////////////////
 
 // get label of given code address (for LABELS only!)
-char* getlabel(uint val, char ds)
+char* getLabel(uint val, char ds)
 {
     static char name[40] ;
 	static int _break = 0xFFFF;
 
-    symbol_t symtofind[1];
+    symbol_t symtofind;
     symbol_t *sym;
 
 	if ( val == _break )
@@ -173,13 +183,13 @@ char* getlabel(uint val, char ds)
 
 	name[0] = 0;
 
-	symtofind->val = val - pcoffset;
-    symtofind->seg = getcodeseg();
+	symtofind.val = val - pcOffset;
+	symtofind.seg = getCodeSeg();
 
 	//printf( "%04X %c\t", symtofind->val, symtofind->seg );
 
-    sym = bsearch(symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
-    if (sym == NULL)
+	sym = searchSymbolByValue( &symtofind );
+	if (sym == NULL)
 	{
 		return name;
 	}
@@ -200,12 +210,12 @@ char* getlabel(uint val, char ds)
 
 	if ( sym->newsym )
 	{
-		*sym->name = pcoffset ? getcodeseg() : 'L';
+		*sym->name = pcOffset ? getCodeSeg() : 'L';
 		sym->newsym = 0;
 	}
 
 	strcpy (name, sym->name);
-	if ( labelcolon )
+	if ( labelColon )
 		strcat (name, ":");
 	sym->label = 1;
 
@@ -213,15 +223,15 @@ char* getlabel(uint val, char ds)
 }
 
 // set label generated (DS labels)
-void setlabelgen( uint val )
+void setLabelGen( uint val )
 {
-    symbol_t symtofind[1];
+    symbol_t symtofind;
     symbol_t *sym;
 
-	symtofind->val = val - pcoffset;
-    symtofind->seg = getcodeseg();
+	symtofind.val = val - pcOffset;
+    symtofind.seg = getCodeSeg();
 
-    sym = bsearch(symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
+	sym = searchSymbolByValue( &symtofind );
     if (sym != NULL)
 	{
 		sym->gen = 1;
@@ -229,22 +239,22 @@ void setlabelgen( uint val )
 }
 
 // get label and offset of given code address
-char* getlabeloffset(uint val)
+static char* getLabelOffset(uint val)
 {
     static char name[40] ;
-	int i;
+	uint i;
 
     symbol_t symtofind[1];
     symbol_t *sym;
 
-	symtofind->val = val - pcoffset;
-    symtofind->seg = getcodeseg();
+	symtofind->val = val - pcOffset;
+    symtofind->seg = getCodeSeg();
 
-    sym = Z80symbols;
+    sym = pSymbols;
 
-	for ( i=0; i<nZ80symbols; ++i )
+	for ( i=0; i<nSymbols; ++i )
 	{
-		if ( symsort( symtofind, Z80symbols+i ) < 0 )
+		if ( compareSymbolValues( symtofind, pSymbols+i ) < 0 )
 			break;
 	}
 
@@ -252,43 +262,41 @@ char* getlabeloffset(uint val)
 
 	if (i>0)
 	{
-		if ( Z80symbols[i-1].val && val-Z80symbols[i-1].val < 0x0400 )
-			sprintf( name, "%s + %Xh", Z80symbols[i-1].name, val-Z80symbols[i-1].val );
+		if ( pSymbols[i-1].val && val-pSymbols[i-1].val < 0x0400 )
+			sprintf( name, "%s + %Xh", pSymbols[i-1].name, val-pSymbols[i-1].val );
     }
 
     return name;
 }
 
-// TRS-80 Data Read Routine (memory address space)
-uchar getdata_null(ushort addr)
+//////// Memory access ////////////////////////////////////////////////////////
+
+// Data Read Routine (memory address space)
+static unsigned char getData_null(unsigned short addr)
 {
 	return 0xFF;
 }
 
-readfptr_t vgetdata = getdata_null;
+static readfptr_t vGetData = getData_null;
 
-void setZ80MemIO( /*writefptr_t outdata, readfptr_t indata, writefptr_t putdata, */
-				 readfptr_t getdata )
+void setGetData( readfptr_t getData )
 {
-	//voutdata = outdata;
-	//vindata = indata;
-	//vputdata = putdata;
-	vgetdata = getdata;
+	vGetData = getData;
 }
 
-//#define outdata (*voutdata)
-//#define indata  (*vindata)
-//#define putdata (*vputdata)
-#define getdata (*vgetdata)
+#define getData (*vGetData)
 
 //  get next instruction byte (sim)
-#define fetch() (getdata(pc++))
+#define fetch() (getData(pc++))
 /*__inline uchar fetch() {
     return (code[pc++]);
 }
 */
+
+//////// Address parsers //////////////////////////////////////////////////////
+
 //  return hex-string or label for double-byte x (dasm)
-char* getxaddr( uint x )
+char* getXAddr( uint x )
 {
 	static char addr[41];
 	symbol_t symtofind;
@@ -297,46 +305,46 @@ char* getxaddr( uint x )
 	comment = NULL;
 
 	symtofind.val = x;
-	symtofind.seg = getcodeseg();
+	symtofind.seg = getCodeSeg();
 
-	sym = bsearch(&symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
+	sym = searchSymbolByValue( &symtofind );
 
-	if ( sym && ( !nonewequ || !sym->newsym ) )
+	if ( sym && ( !noNewEqu || !sym->newsym ) )
 	{
-		strcpy(addr, sym->name);
+		strcpy( addr, sym->name );
 		if ( *sym->comment )
 			comment = sym->comment;
 	}
-	else 
+	else
 	{
 		uint xorg = x;
-		//if ( pcoffsetseg != 'C' )
-		//	xorg -= pcoffset;
+		//if ( pcOffsetSeg != 'C' )
+		//	xorg -= pcOffset;
 
 		if ( !sym )
 		{
-			if ( nNewZ80symbols == Z80symbolsSize )
+			if ( nNewSymbols == symbolsSize )
 			{
-				fprintf( stderr, "*** Symbols table (size %d) overflow [M%04X]\n", Z80symbolsSize, x );
+				fprintf( stderr, "*** pSymbols table (size %d) overflow [M%04X]\n", symbolsSize, x );
 				exit( 1 );
 			}
-			sym = &Z80symbols[nNewZ80symbols++];
-			sprintf( sym->name, "%c%04X", pcoffset ? getcodeseg() : 'D' , xorg );
-			sym->seg = getcodeseg();
+			sym = &pSymbols[nNewSymbols++];
+			sprintf( sym->name, "%c%04X", pcOffset ? getCodeSeg() : 'D' , xorg );
+			sym->seg = getCodeSeg();
 			sym->val = x;
 			sym->lval = xorg;
 			sym->label = 0;
 			sym->newsym = 1;
 			sym->ds = 1;
 			*sym->comment = 0;
-			updateZ80Symbols();
+			updateSymbols();
 		}
 
 		if ( xorg > 0x9FFF )
 			sprintf( addr, "%05XH", xorg );
 		else
 			sprintf( addr, "%04XH", xorg );
-		//printf( "%5d:%s\t", nNewZ80symbols, sym->name );
+		//printf( "%5d:%s\t", nNewSymbols, sym->name );
 	}
 	sym->ref = 1;
 	return addr;
@@ -348,30 +356,80 @@ char* getLastComment()
 	return comment;
 }
 
+// fetch long external address and return it as hex string or as label
+char* getLAddr()
+{
+	uint x;
+	char oldseg = pcOffsetSeg;
+	char *ret;
+
+	x = fetch ();
+	x += fetch () << 8;
+	if ( pcOffset && ( x + pcOffset >= pcOffsetBeg ) && ( x + pcOffset < pcOffsetEnd ) )
+	{
+		//x += pcOffset;
+	}
+	else
+		pcOffsetSeg = 'C';
+	ret = getXAddr( x );
+	pcOffsetSeg = oldseg;
+	return ret;
+}
+
+// fetch short relative external address and return it as hex string or as label
+char* getSAddr()
+{
+	uint x;
+	char oldseg = pcOffsetSeg;
+	char *ret;
+	signed char d;
+	d = (signed char) fetch();
+	x = pc + d;
+	if ( pcOffset && ( x >= pcOffsetBeg ) && ( x < pcOffsetEnd ) )
+	{
+		x -= pcOffset;
+	}
+	else
+		pcOffsetSeg = 'C';
+	ret = getXAddr( x );
+	pcOffsetSeg = oldseg;
+	return ret;
+}
+
+//////// TRS-80 LDOS/LS-DOS SVC Macro calls ///////////////////////////////////
+
+extern instr_t instr[];
+
 //  return hex-string or label for double-byte x (dasm)
-char* getsvc( uint x )
+char* getSvc( uint x )
 {
 	static char addr[41];
 	symbol_t symtofind;
 	symbol_t *sym;
 
+	comment = NULL;
+
 	symtofind.val = x;
 	symtofind.seg = 'S';
 
-	sym = bsearch(&symtofind, Z80symbols, nZ80symbols, sizeof(symbol_t), (compfptr_t)symsort);
+	sym = searchSymbolByValue( &symtofind );
 
-	if ( sym && ( !nonewequ || !sym->newsym ) )
+	if ( sym && ( !noNewEqu || !sym->newsym ) )
+	{
 		strcpy( addr, sym->name );
+		if ( *sym->comment )
+			comment = sym->comment;
+	}
 	else 
 	{
 		if ( !sym )
 		{
-			if ( nNewZ80symbols == Z80symbolsSize )
+			if ( nNewSymbols == symbolsSize )
 			{
-				fprintf( stderr, "*** Symbols table (size %d) overflow [@SVC%02X]\n", Z80symbolsSize, x );
+				fprintf( stderr, "*** pSymbols table (size %d) overflow [@SVC%02X]\n", symbolsSize, x );
 				exit( 1 );
 			}
-			sym = &Z80symbols[nNewZ80symbols++];
+			sym = &pSymbols[nNewSymbols++];
 			sprintf( sym->name, "@SVC%02X", x );
 			sym->seg = 'S';
 			sym->val = x;
@@ -379,7 +437,7 @@ char* getsvc( uint x )
 			sym->label = 0;
 			sym->newsym = 1;
 			sym->ds = 1;
-			updateZ80Symbols();
+			updateSymbols();
 		}
 
 		if ( x > 0x9F )
@@ -391,95 +449,66 @@ char* getsvc( uint x )
 	return addr;
 }
 
-
-// fetch long external address and return it as hex string or as label
-char* getladdr()
-{
-	uint x;
-	char oldseg = pcoffsetseg;
-	char *ret;
-
-	x = fetch ();
-	x += fetch () << 8;
-	if ( pcoffset && ( x + pcoffset >= pcoffsetbeg ) && ( x + pcoffset < pcoffsetend ) )
-	{
-		//x += pcoffset;
-	}
-	else
-		pcoffsetseg = 'C';
-	ret = getxaddr( x );
-	pcoffsetseg = oldseg;
-	return ret;
-}
-
-// fetch short relative external address and return it as hex string or as label
-char* getsaddr()
-{
-	uint x;
-	char oldseg = pcoffsetseg;
-	char *ret;
-	signed char d;
-
-	d = (signed char) fetch ();
-	x = pc + d;
-	if ( pcoffset && ( x >= pcoffsetbeg ) && ( x < pcoffsetend ) )
-	{
-		x -= pcoffset;
-	}
-	else
-		pcoffsetseg = 'C';
-	ret = getxaddr( x );
-	pcoffsetseg = oldseg;
-	return ret;
-}
+//////// Z-80 Operands ////////////////////////////////////////////////////////
 
 // Get nth opcode (1st or 2nd)
-__inline int getopn(int opcode, int pos) { return pos==1? instr[opcode].opn1 : instr[opcode].opn2 ; }
+__inline int getOpn( int opcode, int pos ) 
+{ 
+	return pos==1? instr[opcode].opn1 : instr[opcode].opn2 ; 
+}
 
 // Get nth argument (1st or 2nd)
-__inline int getarg(int opcode, int pos) { return pos==1? instr[opcode].arg1 : instr[opcode].arg2 ; }
+__inline int getArg( int opcode, int pos ) 
+{ 
+	return pos==1? instr[opcode].arg1 : instr[opcode].arg2 ; 
+}
 
 // return operand name or value
-char* getoperand (int opcode, int pos)
+static char* getOperand( int opcode, int pos )
 {
 	static char op[41];
 	uint x;
 
 	strcpy (op, "??");
 
-	switch (getopn(opcode, pos))
+	switch ( getOpn( opcode, pos ) )
 	{
 	case 0:
 		return NULL;
 	case R:
 	case RX:
-		return regnames[getarg(opcode, pos)] ;
+		return regnames[getArg(opcode, pos)] ;
 	case WORD:
-		return getladdr ();
+		return getLAddr();
 	case BYTE:
 		x = fetch ();
-		if ( opcode == 0x3E && getdata( pc ) == 0xEF )
+		if ( usesvc && opcode == 0x3E && getData( pc ) == 0xEF )
 		{
 			// if	LD		A, @svc
 			//		RST		28H
 			// then get SVC label
-			return getsvc( x );
+			return getSvc( x );
 		}
 		if (x>0x9F)
 			sprintf (op, "%03XH", x);
 		else
 			sprintf (op, "%02XH", x);
+		if ( x >= ' ' && x < 0x80 )
+		{
+			comment = commentLine;
+			sprintf( comment, "; '%c'", x );
+		}
 		break;
 	case ATR:
 	case ATPTR:
 	case ATRX:
 		strcpy (op,"(");
-		strcat (op, regnames[getarg(opcode, pos)]) ;
+		strcat (op, regnames[getArg(opcode, pos)]) ;
 		strcat (op, ")");
 		break;
 	case ATWORD:
 		strcpy (op,"(");
-		strcat (op, getladdr()) ;
+		strcat (op, getLAddr()) ;
 		strcat (op, ")");
 		break;
 	case ATBYTE:
@@ -490,16 +519,16 @@ char* getoperand (int opcode, int pos)
 			sprintf( op, "(%02XH)", x );
 		break;
 	case OFFSET:
-		return getsaddr();
+		return getSAddr();
 	case DIRECT:
-		x = getarg( opcode, pos );
+		x = getArg( opcode, pos );
 		if ( x > 0x9F )
 			sprintf( op, "%03XH", x );
 		else
 			sprintf( op, "%02XH", x );
 		break;
 	case BITPOS:
-		x = getarg( opcode, pos );
+		x = getArg( opcode, pos );
 		sprintf( op, "%X", x );
 		break;
 	case Z:
@@ -525,39 +554,44 @@ char* getoperand (int opcode, int pos)
 }
 
 // get 1st operand name or value
-char* getoperand1 (int opcode)
+static char* getOperand1 (int opcode)
 {
-	return getoperand( opcode, 1 );
+	return getOperand( opcode, 1 );
 }
 
 // get 2nd operand name or value
-char* getoperand2 (int opcode)
+static char* getOperand2 (int opcode)
 {
-	return getoperand( opcode, 2 );
+	return getOperand( opcode, 2 );
 }
+
+//////// COMMENTS /////////////////////////////////////////////////////////////
 
 // add comment if any
 static void addComment( char *src, int size, char *comment )
 {
-	int n;
+	size_t n;
 
 	if ( comment )
 	{
 		for ( n = strlen( src ); n < 24; ++n )
+		{
 			src[n] = ' ';
-
+		}
 		src[n] = 0;
 		strncat_s( src, size, comment, size - n - 1 );
 	}
 }
 
+//////// MAIN DISASSEMBLER ////////////////////////////////////////////////////
+
 // get single instruction source
-char* source ()
+char* source()
 {
 	ushort opcode;
 	static char src[80];
 	char substr[41];
-	int i;
+	size_t i;
 	char* op;
 	signed char offset;
 	int x;
@@ -594,20 +628,21 @@ char* source ()
 		}
 	}
 
-	if ( opcode == 0x3E && getdata( pc + 1 ) == 0xEF )
+	if ( usesvc && opcode == 0x3E && getData( pc + 1 ) == 0xEF )
 	{
-		if ( !svcmacro )
+		if ( !svcMacro )
 		{
-			svcmacro = 1;
-			sprintf( macrolines[nmacrolines++], "$SVC    MACRO   #N" );
-			sprintf( macrolines[nmacrolines++], "        LD      A,#N" );
-			sprintf( macrolines[nmacrolines++], "        RST     %s", getxaddr( 0x28 ) );
-			sprintf( macrolines[nmacrolines++], "        ENDM" );
-			*macrolines[nmacrolines++] = 0;
+			svcMacro = 1;
+			sprintf( macroLines[nMacroLines++], "$SVC    MACRO   #N" );
+			sprintf( macroLines[nMacroLines++], "        LD      A,#N" );
+			sprintf( macroLines[nMacroLines++], "        RST     %s", getXAddr( 0x28 ) );
+			sprintf( macroLines[nMacroLines++], "        ENDM" );
+			*macroLines[nMacroLines++] = 0;
 		}
 		x = fetch();
-		sprintf( src, "$SVC    %-24s", getsvc( x ) );
+		sprintf( src, "$SVC    %s", getSvc( x ) );
 		fetch();
+		addComment( src, sizeof(src), comment );
 		return src;
 	}
 
@@ -616,19 +651,19 @@ char* source ()
 
 	if ( *mnemo[instr[opcode].mnemon] == '$' )
 	{
-		for ( i = 0; i < nusedextopcodes; ++i )
+		for ( i = 0; i < nUsedExtOpCodes; ++i )
 		{
-			if ( usedextopcodes[i] == opcode )
+			if ( usedExtOpCodes[i] == opcode )
 				break;
 		}
 
-		if ( i == nusedextopcodes )
+		if ( i == nUsedExtOpCodes )
 		{
-			usedextopcodes[nusedextopcodes++] = opcode;
-			sprintf( macrolines[nmacrolines++], "%-7s MACRO", mnemo[instr[opcode].mnemon] );
-			sprintf( macrolines[nmacrolines++], "        DB      0EDH,0%02XH", opcode & 0xFF );
-			sprintf( macrolines[nmacrolines++], "        ENDM" );
-			*macrolines[nmacrolines++] = 0;
+			usedExtOpCodes[nUsedExtOpCodes++] = opcode;
+			sprintf( macroLines[nMacroLines++], "%-7s MACRO", mnemo[instr[opcode].mnemon] );
+			sprintf( macroLines[nMacroLines++], "        DB      0EDH,0%02XH", opcode & 0xFF );
+			sprintf( macroLines[nMacroLines++], "        ENDM" );
+			*macroLines[nMacroLines++] = 0;
 		}
 	}
 
@@ -644,7 +679,7 @@ char* source ()
 
 	comment = 0;
 
-	op = getoperand1(opcode);
+	op = getOperand1(opcode);
 	if (op != NULL) {
 		if ((useix || useiy) && instr[opcode].arg1 == simHL) {
 			if (instr[opcode].opn1 == RX) {
@@ -658,7 +693,7 @@ char* source ()
 			}
 		}
 		strcat(src, op);
-		op = getoperand2(opcode);
+		op = getOperand2(opcode);
 		if (op != NULL) {
 			strcat(src, ",");
 			if ((useix || useiy) && instr[opcode].arg2 == simHL) {
@@ -679,6 +714,7 @@ char* source ()
 	switch ( instr[opcode].mnemon )
 	{
 	case LD:
+	case CP:
 	case JP:
 	case JR:
 	case CALL:
@@ -690,15 +726,18 @@ char* source ()
 	for (i=strlen(src);i<48;i++) {
 		src[i] = ' ';
 	}
+
 	src[i] = '\0';
+
 	return src;
 }
 
 
-// PROCESSOR INSTRUCTIONS TABLE ///////////////////////////////////////////////
+//////// PROCESSOR INSTRUCTIONS TABLE /////////////////////////////////////////
 
 //  Processor's instruction set
 instr_t instr[] = {
+//		mnemon,			opn1,			opn2,			arg1,			arg2;
 // 00-0F
         NOP,            0,              0,              0,              0,
         LD,             RX,             WORD,           simBC,          0,
