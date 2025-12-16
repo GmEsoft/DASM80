@@ -4,10 +4,18 @@
 #define _TRACE_ACTIVE_ 0
 #define _TRACE_ if ( _TRACE_ACTIVE_ ) errprintf
 
-char version[] = "** Z-80(tm) DISASSEMBLER V1.40beta1 - (c) 2015-24 GmEsoft, All rights reserved. **";
+char version[] = "** Z-80(tm) DISASSEMBLER V1.41beta1 - (c) 2015-25 GmEsoft, All rights reserved. **";
 
 /* Version History
    ---------------
+
+1.41b1:
+* MOD - multiple -C:file.CMD
+* NEW - Text lines in .EQU files that will be listed before the label definition
+* NEW - display duplicate symbol names or values
+* NEW - display comment field from .CMD files
+* FIX - missing spaces after the $SVC macro invocations
+* NEW - -DS:max - max byte count for DS directives
 
 1.40b1:
 * MOD - Code cleaning
@@ -143,7 +151,7 @@ typedef struct segment
 	ushort	offsetend;
 } segment_t;
 
-static enum{ SEG_CODE='!', SEG_BYTE='%', SEG_WORD='#', SEG_CHAR='$', SEG_JUMP='/' };
+enum{ SEG_CODE='!', SEG_BYTE='%', SEG_WORD='#', SEG_CHAR='$', SEG_JUMP='/' };
 
 static segment_t segments[SYMSIZE];
 static int nsegments = 0;
@@ -212,6 +220,23 @@ static int htoc (char *s, int i)
 	return (x<<4)|y;
 }
 
+// Check for duplicate symbol names and values
+static void checkSymbols()
+{
+	qsort(symbols, nSymbols, sizeof(symbol_t), (compfptr_t)compareSymbolNames);
+	for (uint i = 1; i < nSymbols; ++i)
+	{
+		if (!strcmp(symbols[i].name, symbols[i - 1].name))
+			errprintf("Duplicate symbol names at %04X and %04X: [%s]\n", symbols[i - 1].val, symbols[i].val, symbols[i].name);
+	}
+	qsort(symbols, nSymbols, sizeof(symbol_t), (compfptr_t)compareSymbolValues);
+	for (uint i = 1; i < nSymbols; ++i)
+	{
+		if (symbols[i].seg == symbols[i - 1].seg && symbols[i].val == symbols[i - 1].val)
+			errprintf("Duplicate symbol values at %04X: [%s] and [%s]\n", symbols[i].val, symbols[i - 1].name, symbols[i].name);
+	}
+}
+
 // Load symbol tables
 static void symLoad(char *fileName)
 {
@@ -273,7 +298,7 @@ static void symLoad(char *fileName)
 						) 
 					{
 						symval = -1;
-						sscanf(s, " %40s %x%*c%x", symname, &symval, &bit);
+						(void)sscanf(s, " %40s %x%*c%x", symname, &symval, &bit);
 						if (symval != -1 && symname[0] != ';') 
 						{
 							for ( p=symname; *p; ++p )
@@ -281,18 +306,13 @@ static void symLoad(char *fileName)
 								*p = toupper( *p );
 							}
 							strcpy(symbols[nSymbols].name, symname);
-							if (seg == 'B')
-								if (symval<0x80)
-									symbols[nSymbols].val = ((symval-0x20)<<3) + bit;
-								else
-									symbols[nSymbols].val = symval + bit;
-							else
-								symbols[nSymbols].val = symval;
+							symbols[nSymbols].val = symval;
 							symbols[nSymbols].lval = symbols[nSymbols].val;
 							symbols[nSymbols].seg = seg;
 							symbols[nSymbols].label = 0;
 							symbols[nSymbols].newsym = 0;
 							symbols[nSymbols].ds = 1;
+							symbols[nSymbols].pTextLine = 0;
 						}
 						//trace(cprintf("%c:%x\t%s\r\n", seg, symval, symname));
 						//tgetch();
@@ -473,6 +493,22 @@ static void scrLoad( char *fileName )
 	}
 }
 
+static textline_t* addTextLine( const char *text )
+{
+	textline_t* pTextline = malloc(sizeof (struct textline_t));
+	if (pTextline)
+	{
+		pTextline->next = 0;
+		size_t size = strlen(text)+1;
+		pTextline->text = malloc(size);
+		if (pTextline->text)
+		{
+			strcpy_s(pTextline->text, size, text);
+		}
+	}
+	return pTextline;
+}
+
 // Load equates file
 static void equLoad( char *fileName )
 {
@@ -487,6 +523,8 @@ static void equLoad( char *fileName )
 	char equ[8];
 	int count;
 	uint comment;
+	textline_t* pFirstTextLine = 0;
+	textline_t** pLastTextLine = &pFirstTextLine;
 
 	//trace(cprintf("equLoad(""%s"")\r\n", fileName) );
 	file = fopen(fileName,"r");
@@ -503,7 +541,15 @@ static void equLoad( char *fileName )
 			}
 
 			if ( n == 0 )
+			{
+				textline_t* pTextline = addTextLine("");
+				if (pTextline)
+				{
+					*pLastTextLine = pTextline;
+					pLastTextLine = &pTextline->next;
+				}
 				continue;
+			}
 
 			s[n] = 0;
 
@@ -511,6 +557,7 @@ static void equLoad( char *fileName )
 
 			token = count = 0;
 			dec = hex = 0;
+			seg = 0;
 
 			while ( s[n] && s[n] != ';' )
 			{
@@ -580,12 +627,13 @@ static void equLoad( char *fileName )
 							{
 								if ( c != 'H' )
 									hex = dec;
-								seg = ( *name == '@' && hex < 128 ) ? 'S' : seg;
-								for ( n=0; n<nSymbols; ++n )
-									if ( symbols[n].val == hex && symbols[n].seg == seg )
-										break;
-								strcpy( symbols[n].name, name );
 								// segment = 'S' for LS-DOS SVC calls, 'C' otherwise
+								seg = ( usesvc && *name == '@' && hex < 128 ) ? 'S' : seg;
+								n = nSymbols;
+								//for ( n=0; n<nSymbols; ++n )
+								//	if ( symbols[n].val == hex && symbols[n].seg == seg )
+								//		break;
+								strcpy( symbols[n].name, name );
 								symbols[n].seg = seg;
 								symbols[n].val = hex;
 								symbols[n].lval = symbols[n].val;
@@ -598,6 +646,10 @@ static void equLoad( char *fileName )
 									           s + comment, sizeof( symbols[n].comment ) - 1 );
 								else
 									*symbols[n].comment = 0;
+
+								symbols[n].pTextLine = pFirstTextLine;
+								pFirstTextLine = 0;
+								pLastTextLine = &pFirstTextLine;
 
 								if ( n == nSymbols )
 									++nSymbols;
@@ -615,6 +667,16 @@ static void equLoad( char *fileName )
 						break;
 				}
 				++n;
+			}
+
+			if (!seg)
+			{
+				textline_t* pTextline = addTextLine(s);
+				if (pTextline)
+				{
+					*pLastTextLine = pTextline;
+					pLastTextLine = &pTextline->next;
+				}
 			}
 		}
 		fclose (file);
@@ -654,6 +716,7 @@ static uint binLoad( char *fileName, uint org )
 	}
 	return tra;
 }
+
 // Load Hex-Intel file
 static uint hexLoad( char *fileName )
 {
@@ -663,8 +726,10 @@ static uint hexLoad( char *fileName )
 	uint tra=0;
 
     file = fopen(fileName,"r");
-    if (file!=NULL) {
-        while (!feof(file)) {
+    if (file!=NULL) 
+	{
+        while (!feof(file)) 
+		{
             fscanf (file, "%250s\r\n", s);
             if (s[0] == ':') {
                 n = htoc (s,1);
@@ -748,6 +813,7 @@ uint loadCmdFile(FILE* file)
 			counter = fgetc( file );
 			s = comment;						
 			//cprintf(" CMD data: addr=%04x length=%02x\r\n", addr, counter);
+			fputs("Comment : ", stderr);
 			do
 			{
 				byte = fgetc( file );
@@ -757,6 +823,7 @@ uint loadCmdFile(FILE* file)
 			} while( counter && !feof( file ) );
 			*s = 0;
 			fputs( comment, stderr );
+			fputc('\n', stderr);
 			break;
 		}
 	}
@@ -767,7 +834,7 @@ uint loadCmdFile(FILE* file)
 }
 
 // load file in TRS-80 load file format
-uint cmdLoad ( const char *name )
+uint cmdLoad( const char *name )
 {
 	FILE *file;
 	uint tra = 0;
@@ -871,34 +938,71 @@ static void printLabel( ushort addr )
 
 static void printLabelComment( ushort addr, uchar ds )
 {
-	if ( cmtdLblsOnSepLine )
-{
-	char *lbl, *cmt;
-	lbl = getLabel( addr, ds );
-	cmt = getLastComment();
-	if ( cmt || strlen( lbl ) >= 8 )
+	symbol_t* pSym = getSymbol(addr);
+	char isText = 0;
+
+	// Print associated text lines
+	if (pSym)
 	{
-		if ( isPrintBytes )
+		textline_t* pTextline = pSym->pTextLine;
+		while (pTextline)
 		{
-			//fputs( "\t\t", out );
-			fprintf( out, "=%04X\t\t", addr );
-		}
-		lbl = getLabel( addr, DS_NO );
-		printLabel( addr );
-		
-		fprintf( out, "%s\n", cmt ? cmt : "" );
-	}
-}
-	else
-	{
-		getLabel( addr, ds );
-		if ( getLastComment() )
-		{
-			if ( isPrintBytes )
+			isText = 1;
+			if (isPrintBytes)
 			{
-				fputs( "\t\t", out );
+				fputs("\t\t", out);
 			}
-			fprintf( out, "\t%s\n", getLastComment() );
+			fprintf(out, "%s\n", pTextline->text);
+			pTextline = pTextline->next;
+		}
+	}
+
+	// If text line, print label and/or comment
+	if ( !isText)
+	{
+		if (cmtdLblsOnSepLine)
+		{
+			char* lbl, * cmt;
+			lbl = getLabel(addr, ds);
+			cmt = getLastComment();
+			if (cmt || strlen(lbl) >= 8)
+			{
+				// Print code bytes
+				if (isPrintBytes)
+				{
+					fprintf(out, "=%04X\t\t", addr);
+				}
+
+				// Print label
+				lbl = getLabel(addr, DS_NO);
+				printLabel(addr);
+
+				// Print comment
+				fprintf(out, "%s\n", cmt ? cmt : "");
+			}
+		}
+		else
+		{
+			char *cmt;
+			getLabel(addr, ds);
+			cmt = getLastComment();
+			if (cmt)
+			{
+				// Skip leading spaces in comment
+				if ( *cmt == ';' )
+				{
+					++cmt;
+					while ( *cmt && ( *cmt == ' ' || *cmt == '\t' ) )
+						++cmt;
+				}
+				// Print code bytes
+				if (isPrintBytes)
+				{
+					fputs("\t\t", out);
+				}
+				// Print comment
+				fprintf(out, ";\t%s\n", cmt);
+			}
 		}
 	}
 }
@@ -906,19 +1010,19 @@ static void printLabelComment( ushort addr, uchar ds )
 static void printLabelIfNotDoneInComment( ushort addr )
 {
 	if ( cmtdLblsOnSepLine )
-{
-	char *cmt, *lbl;
-	lbl = getLabel( addr, DS_NO );
-	cmt = getLastComment();
-	if ( !cmt && strlen( lbl ) < 8 )
 	{
-		printLabel( addr );
+		char *cmt, *lbl;
+		lbl = getLabel( addr, DS_NO );
+		cmt = getLastComment();
+		if ( !cmt && strlen( lbl ) < 8 )
+		{
+			printLabel( addr );
+		}
+		else
+		{
+			fputc( '\t', out );
+		}
 	}
-	else
-	{
-		fputc( '\t', out );
-	}
-}
 	else
 	{
 		printLabel( addr );
@@ -1026,12 +1130,13 @@ int main(int argc, char* argv[])
 
 	char outFileName[80];
 	char hexFileName[80];
-	char cmdFileName[80];
+	char cmdFileNames[8][80];
 	char binFileName[80];
 	char scrFileName[80];
-	char symFileName[8][80];
+	char symFileNames[8][80];
+	char equFileNames[8][80];
+	uint nCmdFiles = 0;
 	uint nSymFiles = 0;
-	char equFileName[8][80];
 	uint nEquFiles = 0;
 	char noSingleQuote = 0;
 	char zmac = 0;
@@ -1050,7 +1155,6 @@ int main(int argc, char* argv[])
 	outFileName[0] = '\0';
  	scrFileName[0] = '\0';
 	hexFileName[0] = '\0';
-	cmdFileName[0] = '\0';
 	binFileName[0] = '\0';
 
 	out = stdout;
@@ -1068,84 +1172,114 @@ int main(int argc, char* argv[])
 		{
 			switch ( toupper(*(s++)) )
 			{
+			case 'B':	// BIN file
+				org = 0;
+				if (isdigit(*s))
+				{
+					org = *(s++) - '0';
+					while (isalnum(*s))
+					{
+						org = (org << 4) + (*s > '9' ? toupper(*s) + 10 - 'A' : *s - '0');
+						++s;
+					}
+				}
+				if (*s == ':')
+					s++;
+				strcpy(binFileName, s);
+				addDefaultExt(binFileName, ".bin");
+				break;
+			case 'C':	// DOS CMD file
+				if (*s == ':')
+					s++;
+				strcpy(cmdFileNames[nCmdFiles], s);
+				addDefaultExt(cmdFileNames[nCmdFiles], ".cmd");
+				++nCmdFiles;
+				break;
+			case 'D':	// Defs
+				switch (toupper(*s++))
+				{
+				case 'S':	// DS:max
+					if (*s == ':')
+						s++;
+					dsMax = 0;
+					if (isdigit(*s))
+					{
+						dsMax = *(s++) - '0';
+						while (isalnum(*s))
+						{
+							dsMax = (dsMax << 4) + (*s > '9' ? toupper(*s) + 10 - 'A' : *s - '0');
+							++s;
+						}
+					}
+					break;
+				default:
+					--s;
+				}
+				break;
+			case 'E':	// Equate file
+				if (*s == ':')
+					s++;
+				if (nEquFiles == 8)
+				{
+					errprintf("*** %s - More than 8 equ files specified.", argv[i]);
+					errexit(1);
+				}
+				strcpy(equFileNames[nEquFiles], s);
+				addDefaultExt(equFileNames[nEquFiles], ".equ");
+				++nEquFiles;
+				break;
 			case 'F':   // output format (currently not supported)
 				if ( *s == ':' )
 					s++;
 				if ( isalpha( *s ) )
 					outFormat = toupper( *s );
 				break;
-			case 'M':   // symbol table
-				if ( *s == ':' )
-					s++;
-				if ( nSymFiles == 8 )
-				{
-					errprintf( "*** %s - More than 8 .map files specified.", argv[i] );
-					errexit( 1 );
-				}
-				strcpy (symFileName[nSymFiles], s);
-				addDefaultExt( symFileName[nSymFiles], ".map" );
-				nSymFiles++;
-				break;
 			case 'H':	// Intel Hex file
 				if ( *s == ':' )
 					s++;
-				if ( *hexFileName || *binFileName || *cmdFileName )
-				{
-					errprintf( "*** %s - Only one input file allowed.", argv[i] );
-					errexit( 1 );
-				}
 				strcpy( hexFileName, s );
 				addDefaultExt( hexFileName, ".hex" );
 				break;
-			case 'C':	// DOS CMD file
-				if ( *s == ':' )
-					s++;
-				if ( *hexFileName || *binFileName || *cmdFileName )
+			case 'L':	// Labels
+				switch (toupper(*s++))
 				{
-					errprintf( "*** %s - Only one input file allowed.", argv[i] );
-					errexit( 1 );
+				case 'C':	// Colon after labels
+					labelColon = 1;
+					break;
+				case 'S':	// Commented labels on separate line
+					cmtdLblsOnSepLine = 1;
+					break;
+				default:
+					--s;
 				}
-				strcpy( cmdFileName, s );
-				addDefaultExt( cmdFileName, ".cmd" );
 				break;
-			case 'B':	// BIN file
-				org = 0;
-				if ( isdigit( *s ) )
-				{
-					org = *(s++) - '0';
-					while ( isalnum( *s ) )
-					{
-						org = (org<<4) + ( *s > '9' ? toupper( *s ) + 10 - 'A' : *s - '0' );
-						++s;
-					}
-				}
-				if ( *s == ':' )
+			case 'M':   // symbol table
+				if (*s == ':')
 					s++;
-				if ( *hexFileName || *binFileName || *cmdFileName )
+				if (nSymFiles == 8)
 				{
-					errprintf( "*** %s - Only one input file allowed.", argv[i] );
-					errexit( 1 );
+					errprintf("*** %s - More than 8 .map files specified.", argv[i]);
+					errexit(1);
 				}
-				strcpy( binFileName, s );
-				addDefaultExt( binFileName, ".bin" );
+				strcpy(symFileNames[nSymFiles], s);
+				addDefaultExt(symFileNames[nSymFiles], ".map");
+				nSymFiles++;
 				break;
-			case 'S':	// Screening file
-				if ( *s == ':' )
-					s++;
-				strcpy( scrFileName, s );
-				addDefaultExt( scrFileName, ".scr" );
-				break;
-			case 'E':	// Equate file
-				if ( *s == ':' )
-					s++;
-				if ( nEquFiles == 8 )
+			case 'N':	// No flags
+				switch (toupper(*s++))
 				{
-					errprintf( "*** %s - More than 8 equ files specified.", argv[i] );
-					errexit( 1 );
+				case 'E':	// No New EQUates
+					noNewSymbol = 1;
+					break;
+				case 'H':	// No Header
+					noHeader = 1;
+					break;
+				case 'Q':	// No Single Quote
+					noSingleQuote = 1;
+					break;
+				default:
+					--s;
 				}
-				strcpy( equFileName[nEquFiles], s );
-				addDefaultExt( equFileName[nEquFiles], ".equ" );
-				++nEquFiles;
 				break;
 			case 'O':	// Output ASM file
 				if ( *s == ':' )
@@ -1169,41 +1303,21 @@ int main(int argc, char* argv[])
 				strcpy( outFileName, s );
 				addDefaultExt( outFileName, ".prn" );
 				break;
+			case 'S':	// Screening file
+				if (*s == ':')
+					s++;
+				strcpy(scrFileName, s);
+				addDefaultExt(scrFileName, ".scr");
+				break;
+			case 'V':	// Verbose
+				verbose = 1;
+				break;
 			case 'W':	// Wide mode
 				width = 79;
 				if ( toupper( *s ) != 'W' )
 					break;
 				++s;
 				width = 130;
-				break;
-			case 'N':	// No flags
-				switch( toupper( *s++ ) )
-				{
-				case 'E':	// No New EQUates
-					noNewSymbol = 1;
-					break;
-				case 'H':	// No Header
-					noHeader = 1;
-					break;
-				case 'Q':	// No Single Quote
-					noSingleQuote = 1;
-					break;
-				default:
-					--s;
-				}
-				break;
-			case 'L':	// Labels
-				switch( toupper( *s++ ) )
-				{
-				case 'C':	// Colon after labels
-					labelColon = 1;
-					break;
-				case 'S':	// Commented labels on separate line
-					cmtdLblsOnSepLine = 1;
-					break;
-				default:
-					--s;
-				}
 				break;
 			case '-':
 				if ( !_stricmp( s, "zmac" ) )
@@ -1217,14 +1331,12 @@ int main(int argc, char* argv[])
 				else
 				{
 					errprintf( "*** %s - Unrecognized option.", argv[i] );
+					errexit(1);
 				}
-				break;
-			case 'V':	// Verbose
-				verbose = 1;
 				break;
 			case '!':	// Wait keypress before starting
 				fputs( "Press ENTER to start.", stderr );
-				getchar();
+				(void)getchar();
 				break;
 			case '?':	// Help
 				help();
@@ -1237,17 +1349,13 @@ int main(int argc, char* argv[])
 		}
 		else
 		{
-			if ( *hexFileName || *binFileName || *cmdFileName )
-			{
-				errprintf( "*** %s - Only one input file allowed.", argv[i] );
-				errexit( 1 );
-			}
-			strcpy( cmdFileName, argv[i] );
-			addDefaultExt( cmdFileName, ".cmd" );
+			strcpy(cmdFileNames[nCmdFiles], argv[i]);
+			addDefaultExt(cmdFileNames[nCmdFiles], ".cmd");
+			++nCmdFiles;
 		}
 	}
 
-	if ( !*hexFileName && !*binFileName && !*cmdFileName )
+	if ( !*hexFileName && !*binFileName && !*cmdFileNames )
 	{
 		errprintf( "*** Missing input filename." );
 		errexit( 1 );
@@ -1260,12 +1368,13 @@ int main(int argc, char* argv[])
 		scrLoad( scrFileName );
 
 	for ( i=0; i<nSymFiles; ++i )
-		symLoad( symFileName[i] );
+		symLoad( symFileNames[i] );
 
 	for ( i=0; i<nEquFiles; ++i )
-		equLoad( equFileName[i] );
+		equLoad( equFileNames[i] );
 
-	setSymbols( symbols, nSymbols, SYMSIZE );
+	checkSymbols(symbols, nSymbols, SYMSIZE);
+	setSymbols(symbols, nSymbols, SYMSIZE);
 
 	setGetData( getData );
 
@@ -1274,14 +1383,14 @@ int main(int argc, char* argv[])
 		tra = hexLoad( hexFileName );
 	}
 
-	if ( *cmdFileName )
-	{
-		tra = cmdLoad( cmdFileName );
-	}
-
 	if ( *binFileName )
 	{
 		tra = binLoad( binFileName, org );
+	}
+
+	for ( uint i=0; i<nCmdFiles; ++i )
+	{
+		tra = cmdLoad(cmdFileNames[i]);
 	}
 
 	if ( verbose )
@@ -1331,20 +1440,22 @@ int main(int argc, char* argv[])
 				fprintf( out, ";\tDisassembly of : %s", binFileName );
 				printEol();
 			}
-			else if ( *hexFileName )
+
+			if ( *hexFileName )
 			{
 				fprintf( out, ";\tDisassembly of : %s", hexFileName );
 				printEol();
 			}
-			else if ( *cmdFileName )
+
+			for ( uint i=0; i<nCmdFiles ; ++i )
 			{
-				fprintf( out, ";\tDisassembly of : %s", cmdFileName );
+				fprintf( out, ";\tDisassembly of : %s", cmdFileNames[i]);
 				printEol();
 			}
 			
 			for ( i=0; i<nEquFiles; ++i )
 			{
-				fprintf( out, ";\tEquates file   : %s", equFileName[i] );
+				fprintf( out, ";\tEquates file   : %s", equFileNames[i] );
 				printEol();
 			}
 
@@ -2011,7 +2122,6 @@ int main(int argc, char* argv[])
 		fputs( "+ New symbol\n", out );
 		fputs( "? Not referenced\n", out );
 		fputs( "= EQUate\n", out );
-
 	}
 
 	if ( *outFileName )
