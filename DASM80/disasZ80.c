@@ -107,20 +107,23 @@ char* getMacroLine( uint line )
 
 //////// SYMBOLS //////////////////////////////////////////////////////////////
 
-void setSymbols( symbol_t *p_pSymbols, int p_nSymbols, int p_symbolsSize )
+// set symbols table
+void setSymbols(symbol_t* p_pSymbols, int p_nSymbols, int p_symbolsSize)
 {
-	pSymbols = p_pSymbols;
-	nSymbols = p_nSymbols;
-	nNewSymbols = nSymbols;
-	symbolsSize = p_symbolsSize;
-	qsort(pSymbols, nSymbols, sizeof(symbol_t), (compfptr_t)compareSymbolValues);
+    pSymbols = p_pSymbols;
+    nSymbols = p_nSymbols;
+    nNewSymbols = nSymbols;
+    symbolsSize = p_symbolsSize;
+    qsort(pSymbols, nSymbols, sizeof(symbol_t), (compfptr_t)compareSymbolValues);
 }
 
+// update symbols table
 void updateSymbols()
 {
 	setSymbols( pSymbols, nNewSymbols, symbolsSize );
 }
 
+// reset symbols table
 void resetSymbols()
 {
 	uint i;
@@ -131,14 +134,14 @@ void resetSymbols()
 	}
 }
 
+// get number of symbols in table
 uint getNumSymbols()
 {
 	return nSymbols;
 }
 
-// comparison function for qsort() and bsearch()
-
-static int  compareSymbolValues(symbol_t *a, symbol_t *b)
+// comparison functions for qsort() and bsearch()
+int  compareSymbolValues(symbol_t *a, symbol_t *b)
 {
     if (a->val < b->val) return -1;
     if (a->val > b->val) return 1;
@@ -147,16 +150,17 @@ static int  compareSymbolValues(symbol_t *a, symbol_t *b)
     return 0;
 }
 
-static int  compareSymbolNames(symbol_t *a, symbol_t *b)
+// comparison function for bsearch() to find symbol by name
+int  compareSymbolNames(symbol_t *a, symbol_t *b)
 {
     return strcmp( a->name, b->name );
 }
 
+// search symbol by value
 static symbol_t *searchSymbolByValue( symbol_t *symToFind )
 {
 	return bsearch(symToFind, pSymbols, nSymbols, sizeof(symbol_t), (compfptr_t)compareSymbolValues);
 }
-
 
 static char getCodeSeg()
 {
@@ -165,13 +169,25 @@ static char getCodeSeg()
 
 //////// LABELS ///////////////////////////////////////////////////////////////
 
+// get symbol by value
+symbol_t* getSymbol(uint val)
+{
+    symbol_t symtofind;
+
+    symtofind.val = val - pcOffset;
+    symtofind.seg = getCodeSeg();
+
+    //printf( "%04X %c\t", symtofind->val, symtofind->seg );
+
+    return searchSymbolByValue(&symtofind);
+}
+
 // get label of given code address (for LABELS only!)
 char* getLabel(uint val, char ds)
 {
     static char name[40] ;
 	static int _break = 0xFFFF;
 
-    symbol_t symtofind;
     symbol_t *sym;
 
 	if ( val == _break )
@@ -183,12 +199,7 @@ char* getLabel(uint val, char ds)
 
 	name[0] = 0;
 
-	symtofind.val = val - pcOffset;
-	symtofind.seg = getCodeSeg();
-
-	//printf( "%04X %c\t", symtofind->val, symtofind->seg );
-
-	sym = searchSymbolByValue( &symtofind );
+    sym = getSymbol(val);
 	if (sym == NULL)
 	{
 		return name;
@@ -279,6 +290,7 @@ static unsigned char getData_null(unsigned short addr)
 
 static readfptr_t vGetData = getData_null;
 
+// Set Data Read Routine (memory address space)
 void setGetData( readfptr_t getData )
 {
 	vGetData = getData;
@@ -613,7 +625,7 @@ char* source()
 
 	if ( useix || useiy ) 
 	{
-		if ( opcode==0xE3 || opcode==0xE9 ) // ex (SP),IX ; jp (ix)
+		if ( opcode == 0xE3 || opcode == 0xE9 ) // ex (SP),IX ; jp (ix)
 		{
 			offset = 0;
 		} 
@@ -643,7 +655,11 @@ char* source()
 		sprintf( src, "$SVC    %s", getSvc( x ) );
 		fetch();
 		addComment( src, sizeof(src), comment );
-		return src;
+        for (i = strlen(src); i < 48; i++) {
+            src[i] = ' ';
+        }
+        src[i] = '\0';
+        return src;
 	}
 
 
@@ -687,8 +703,8 @@ char* source()
 			} else if (instr[opcode].opn1 == ATPTR) {
 				sprintf (substr, "(%s%+d)", useix ? "IX" : "IY", offset);
 				op = substr ;
-			} else if (instr[opcode].opn1 == ATRX) {
-				sprintf (substr, "(%s%)", useix ? "IX" : "IY");
+			} else if (instr[opcode].opn1 == ATRX) { // JP (IX) => offset
+				sprintf (substr, "(%s)", useix ? "IX" : "IY");
 				op = substr ;
 			}
 		}
@@ -702,8 +718,8 @@ char* source()
 				} else if (instr[opcode].opn2 == ATPTR) {
 					sprintf (substr, "(%s%+d)", useix ? "IX" : "IY", offset);
 					op = substr ;
-				} else if (instr[opcode].opn2 == ATRX) {
-					sprintf (substr, "(%s%)", useix ? "IX" : "IY");
+				} else if (instr[opcode].opn2 == ATRX) { // JP (IX) => offset
+					sprintf (substr, "(%s)", useix ? "IX" : "IY");
 					op = substr ;
 				}
 			}

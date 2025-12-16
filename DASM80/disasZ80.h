@@ -9,19 +9,30 @@ typedef unsigned int ushort; //TODO: unsigned short causes 10000H to be never re
 typedef int (*compfptr_t)(const void*, const void*);
 typedef unsigned char (*readfptr_t)( unsigned short );
 
-typedef struct symbol_t { char    name[41];
-                        uint    val;
-						uint	lval;
-                        char    seg;
-                        char  	label;			// 1 if label, 0 if equate
-						char	ref;			// 1 if ref, 0 if not
-						char	newsym;			// 1 if new symbol, 0 if not
-						char	ds;				// 1 if DS label
-						char	gen;			// 1 if already generated
-						char	comment[61];
-                      } symbol_t;
+
+typedef struct textline_t { 
+	struct textline_t* next;
+	char* text;
+} textline_t;
+
+typedef struct {
+	char		name[41];
+	uint		val;
+	uint		lval;
+	char		seg;
+	char  		label;			// 1 if label, 0 if equate
+	char		ref;			// 1 if ref, 0 if not
+	char		newsym;			// 1 if new symbol, 0 if not
+	char		ds;				// 1 if DS label
+	char		gen;			// 1 if already generated
+	char		comment[61];
+	textline_t* pTextLine;
+} symbol_t;
 
 enum { DS_NO = 0, DS_YES = 1 }; // Allow labels for DS
+
+// get symbol by value
+symbol_t* getSymbol(uint val);
 
 // get label of given code address
 char* getLabel( uint val, char ds );
@@ -57,15 +68,19 @@ typedef struct
 	int mnemon, opn1, opn2, arg1, arg2;
 } instr_t;
 
+// get macro line by number
 char* getMacroLine( uint line );
 
 // Attach disassembler to external symbol table
-void setSymbols( symbol_t *pSymbols, int pNSymbols, int pSymbolsSize );
+void setSymbols(symbol_t* pSymbols, int pNSymbols, int pSymbolsSize);
 
+// update symbols table
 void updateSymbols();
 
+// reset symbols table
 void resetSymbols();
 
+// get number of symbols
 uint getNumSymbols();
 
 // Attach Z80 to memory and I/O ports
